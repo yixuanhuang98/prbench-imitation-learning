@@ -54,9 +54,9 @@ def main():
     parser.add_argument(
         "--data-type",
         type=str,
-        default="expert",
-        choices=["random", "expert"],
-        help="Type of data to collect",
+        default="random",
+        choices=["random"],
+        help="Type of data to collect (only random supported)",
     )
     parser.add_argument(
         "--save-demo-videos",

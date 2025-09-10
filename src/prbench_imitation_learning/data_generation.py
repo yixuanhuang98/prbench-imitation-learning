@@ -130,104 +130,6 @@ def create_dataset_features(
     return features
 
 
-def generate_expert_trajectory(
-    env: gym.Env,
-    max_steps: int = 1000,
-    save_video: bool = False,
-    video_path: str = None,
-) -> Tuple[List[Dict], bool]:
-    """Generate a single expert trajectory using the environment's expert policy.
-
-    Args:
-        env: The environment to generate trajectory from
-        max_steps: Maximum number of steps per trajectory
-        save_video: Whether to save video of the trajectory
-        video_path: Path to save the video (required if save_video=True)
-
-    Returns:
-        Tuple of (trajectory, success_flag)
-    """
-    trajectory = []
-    frames = [] if save_video else None
-
-    try:
-        obs, info = env.reset()
-        step_count = 0
-        total_reward = 0.0
-
-        # Capture initial frame if saving video
-        if save_video:
-            try:
-                frame = env.render()
-                if frame is not None:
-                    frames.append(frame)
-            except:
-                pass  # Skip if rendering fails
-
-        while step_count < max_steps:
-            # Use expert policy if available
-            if hasattr(env, "get_expert_action"):
-                try:
-                    action = env.get_expert_action()
-                except:
-                    # Fallback to random action if expert policy fails
-                    action = env.action_space.sample()
-            else:
-                # Fallback to random action
-                action = env.action_space.sample()
-
-            # Take step
-            next_obs, reward, terminated, truncated, next_info = env.step(action)
-            done = terminated or truncated
-
-            # Store transition
-            transition = {
-                "obs": obs.copy(),
-                "action": action.copy(),
-                "reward": reward,
-                "next_obs": next_obs.copy(),
-                "done": done,
-                "info": info.copy(),
-                "next_info": next_info.copy(),
-            }
-            trajectory.append(transition)
-
-            # Capture frame if saving video
-            if save_video:
-                try:
-                    frame = env.render()
-                    if frame is not None:
-                        frames.append(frame)
-                except:
-                    pass  # Skip if rendering fails
-
-            total_reward += reward
-            step_count += 1
-
-            if done:
-                break
-
-            obs = next_obs
-            info = next_info
-
-        # Save video if requested
-        if save_video and frames and video_path:
-            _save_video_frames(frames, video_path)
-            print(f"  Video saved to: {video_path}")
-
-        # Consider successful if environment indicates success or positive reward
-        success = next_info.get("success", total_reward > 0)
-        print(
-            f"  Generated trajectory: {len(trajectory)} steps, reward: {total_reward:.2f}, success: {success}"
-        )
-
-        return trajectory, success
-
-    except Exception as e:
-        print(f"  Error generating trajectory: {e}")
-        return [], False
-
-
 def generate_random_trajectory(
     env: gym.Env,
     max_steps: int = 1000,
@@ -388,7 +290,7 @@ def generate_lerobot_dataset(
         env_name: Name of the environment
         dataset_name: Name for the dataset
         num_episodes: Number of episodes to collect
-        data_type: Type of data to collect ("expert" or "random")
+        data_type: Type of data to collect (only "random" supported)
         output_dir: Directory to save the dataset
         log_dir: Directory for logs
         max_steps_per_episode: Maximum steps per episode
@@ -458,14 +360,7 @@ def generate_lerobot_dataset(
         if save_videos and videos_dir:
             video_path = str(videos_dir / f"episode_{episode_idx + 1}_{data_type}.gif")
 
-        if data_type == "expert":
-            trajectory, success = generate_expert_trajectory(
-                env,
-                max_steps_per_episode,
-                save_video=save_videos,
-                video_path=video_path,
-            )
-        elif data_type == "random":
+        if data_type == "random":
             trajectory, success = generate_random_trajectory(
                 env,
                 max_steps_per_episode,
@@ -473,7 +368,7 @@ def generate_lerobot_dataset(
                 video_path=video_path,
             )
         else:
-            raise ValueError(f"Unknown data type: {data_type}")
+            raise ValueError(f"Unknown data type: {data_type}. Only 'random' is supported.")
 
         if trajectory:
             # Convert to dataset format
