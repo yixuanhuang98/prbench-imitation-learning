@@ -4,115 +4,22 @@ Complete pipeline script for generating data, training, and evaluating diffusion
 """
 
 import argparse
+import json
 import os
 import sys
-import subprocess
-import json
-from pathlib import Path
 import time
+from pathlib import Path
 
+# Add src to path to import our modules
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-def run_command(command: str, description: str = "", check: bool = True):
-    """Run a shell command with error handling."""
-    print(f"\n{'='*60}")
-    print(f"RUNNING: {description or command}")
-    print(f"{'='*60}")
-    print(f"Command: {command}")
-    print()
-    
-    result = subprocess.run(command, shell=True, check=check, 
-                          capture_output=False, text=True)
-    
-    if result.returncode != 0:
-        print(f"ERROR: Command failed with return code {result.returncode}")
-        if check:
-            sys.exit(1)
-    else:
-        print(f"SUCCESS: {description or 'Command completed'}")
-    
-    return result
-
-
-def generate_data(env_name: str, dataset_name: str, num_episodes: int, data_type: str, output_dir: str):
-    """Generate LeRobot dataset."""
-    command = f"""
-    python generate_lerobot_data.py \\
-        --env {env_name} \\
-        --dataset-name {dataset_name} \\
-        --num-episodes {num_episodes} \\
-        --data-type {data_type} \\
-        --output-dir {output_dir}
-    """
-    
-    run_command(command.strip(), f"Generating {data_type} dataset for {env_name}")
-    
-    return str(Path(output_dir) / dataset_name)
-
-
-def train_model(dataset_path: str, model_save_path: str, config: dict):
-    """Train diffusion policy."""
-    
-    # Save config to temporary file
-    config_path = "/tmp/diffusion_config.json"
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-    
-    command = f"""
-    python train_diffusion_policy.py \\
-        --dataset-path {dataset_path} \\
-        --model-save-path {model_save_path} \\
-        --config {config_path} \\
-        --batch-size {config['batch_size']} \\
-        --num-epochs {config['num_epochs']} \\
-        --learning-rate {config['learning_rate']}
-    """
-    
-    if config.get('use_wandb', False):
-        command += " --use-wandb"
-    
-    run_command(command.strip(), "Training diffusion policy")
-    
-    # Clean up config file
-    os.remove(config_path)
-
-
-def evaluate_model(model_path: str, env_id: str, num_episodes: int, output_dir: str, 
-                  render: bool = False, save_videos: bool = False, save_plots: bool = True):
-    """Evaluate trained model."""
-    
-    command_parts = [
-        # "CUDA_VISIBLE_DEVICES=''",
-        "python evaluate_diffusion_policy.py",
-        f"--model-path {model_path}",
-        f"--env {env_id}",
-        f"--num-episodes {num_episodes}",
-        f"--output-dir {output_dir}",
-        "--device cpu"
-    ]
-    
-    if render:
-        command_parts.append("--render")
-    if save_videos:
-        command_parts.append("--save-videos")
-    if save_plots:
-        command_parts.append("--save-plots")
-    
-    command = " ".join(command_parts)
-    
-    run_command(command.strip(), "Evaluating trained model")
-
-
-def get_env_id(env_name: str) -> str:
-    """Get full environment ID from short name."""
-    env_map = {
-        "motion2d": "prbench/Motion2D-p2-v0",
-        "pushpullhook2d": "prbench/PushPullHook2D-v0", 
-        "stickbutton2d": "prbench/StickButton2D-b2-v0",
-        "clutteredretrieval2d": "prbench/ClutteredRetrieval2D-o10-v0",
-        "clutteredstorage2d": "prbench/ClutteredStorage2D-b3-v0",
-        "obstruction2d": "prbench/Obstruction2D-o2-v0"
-    }
-    return env_map.get(env_name, env_name)
+from prbench_imitation_learning import (
+    generate_lerobot_dataset,
+    train_diffusion_policy, 
+    get_default_training_config,
+    evaluate_policy,
+    get_available_environments
+)
 
 
 def main():
@@ -163,6 +70,8 @@ def main():
                        help="Output directory for all results")
     parser.add_argument("--experiment-name", type=str,
                        help="Experiment name (auto-generated if not provided)")
+    parser.add_argument("--log-dir", type=str, default="./logs",
+                       help="Directory for logs")
     
     args = parser.parse_args()
     
@@ -176,20 +85,31 @@ def main():
     dataset_dir = output_dir / "datasets"
     model_dir = output_dir / "models"
     eval_dir = output_dir / "evaluation"
+    log_dir = Path(args.log_dir)
     
-    for dir_path in [output_dir, dataset_dir, model_dir, eval_dir]:
+    for dir_path in [output_dir, dataset_dir, model_dir, eval_dir, log_dir]:
         dir_path.mkdir(parents=True, exist_ok=True)
     
-    print("="*80)
-    print("DIFFUSION POLICY PIPELINE FOR GEOM2D ENVIRONMENTS")
-    print("="*80)
-    print(f"Experiment: {args.experiment_name}")
-    print(f"Environment: {args.env}")
-    print(f"Output directory: {output_dir}")
-    print(f"Steps: {'Data' if not args.skip_data else 'Skip Data'} -> "
-          f"{'Train' if not args.skip_training else 'Skip Train'} -> "
-          f"{'Eval' if not args.skip_evaluation else 'Skip Eval'}")
-    print("="*80)
+    # Setup main log file
+    main_log_path = log_dir / f"{args.experiment_name}_pipeline.log"
+    
+    def log_message(message: str):
+        """Log message to both console and file."""
+        print(message)
+        with open(main_log_path, 'a') as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+    
+    log_message("="*80)
+    log_message("DIFFUSION POLICY PIPELINE FOR GEOM2D ENVIRONMENTS")
+    log_message("="*80)
+    log_message(f"Experiment: {args.experiment_name}")
+    log_message(f"Environment: {args.env}")
+    log_message(f"Output directory: {output_dir}")
+    log_message(f"Log directory: {log_dir}")
+    log_message(f"Steps: {'Data' if not args.skip_data else 'Skip Data'} -> "
+              f"{'Train' if not args.skip_training else 'Skip Train'} -> "
+              f"{'Eval' if not args.skip_evaluation else 'Skip Eval'}")
+    log_message("="*80)
     
     # Save experiment configuration
     experiment_config = {
@@ -207,7 +127,7 @@ def main():
     config_path = output_dir / "experiment_config.json"
     with open(config_path, 'w') as f:
         json.dump(experiment_config, f, indent=2)
-    print(f"Experiment config saved to: {config_path}")
+    log_message(f"Experiment config saved to: {config_path}")
     
     dataset_path = None
     model_path = None
@@ -215,67 +135,76 @@ def main():
     try:
         # Step 1: Data Generation
         if not args.skip_data:
-            print(f"\n🔄 STEP 1: Generating {args.data_type} data for {args.env}")
+            log_message(f"\n🔄 STEP 1: Generating {args.data_type} data for {args.env}")
             dataset_name = f"{args.env}_{args.data_type}_{args.data_episodes}ep"
-            dataset_path = generate_data(
+            dataset_path = generate_lerobot_dataset(
                 env_name=args.env,
                 dataset_name=dataset_name,
                 num_episodes=args.data_episodes,
                 data_type=args.data_type,
-                output_dir=str(dataset_dir)
+                output_dir=str(dataset_dir),
+                log_dir=str(log_dir)
             )
-            print(f"✅ Data generation completed: {dataset_path}")
+            log_message(f"✅ Data generation completed: {dataset_path}")
         else:
             dataset_path = args.dataset_path
             if not dataset_path:
                 raise ValueError("Must provide --dataset-path when skipping data generation")
-            print(f"⏭️  Skipping data generation, using: {dataset_path}")
+            log_message(f"⏭️  Skipping data generation, using: {dataset_path}")
         
         # Step 2: Training
         if not args.skip_training:
-            print(f"\n🔄 STEP 2: Training diffusion policy")
+            log_message(f"\n🔄 STEP 2: Training diffusion policy")
             
-            # Training configuration
-            train_config = {
-                "obs_horizon": 2,
-                "action_horizon": 8,
-                "pred_horizon": 8,
-                "num_diffusion_iters": 100,
+            # Get default config and update with user settings
+            train_config = get_default_training_config()
+            train_config.update({
                 "batch_size": args.batch_size,
                 "num_epochs": args.train_epochs,
                 "learning_rate": args.learning_rate,
-                "weight_decay": 1e-6,
-                "grad_clip_norm": 1.0,
-                "num_workers": 4,
-                "log_interval": 10,
                 "use_wandb": args.use_wandb,
-            }
+            })
             
             model_path = str(model_dir / f"{args.experiment_name}_model.pth")
-            train_model(dataset_path, model_path, train_config)
-            print(f"✅ Training completed: {model_path}")
+            train_diffusion_policy(
+                dataset_path=dataset_path, 
+                model_save_path=model_path, 
+                config=train_config,
+                log_dir=str(log_dir)
+            )
+            log_message(f"✅ Training completed: {model_path}")
         else:
             model_path = args.model_path
             if not model_path:
                 raise ValueError("Must provide --model-path when skipping training")
-            print(f"⏭️  Skipping training, using: {model_path}")
+            log_message(f"⏭️  Skipping training, using: {model_path}")
         
         # Step 3: Evaluation
         if not args.skip_evaluation:
-            print(f"\n🔄 STEP 3: Evaluating trained policy")
-            env_id = get_env_id(args.env)
-            evaluate_model(
+            log_message(f"\n🔄 STEP 3: Evaluating trained policy")
+            
+            # Get environment ID
+            available_envs = get_available_environments()
+            env_id = available_envs.get(args.env, args.env)
+            
+            results = evaluate_policy(
                 model_path=model_path,
                 env_id=env_id,
                 num_episodes=args.eval_episodes,
+                device="cpu",  # Force CPU for consistency
                 output_dir=str(eval_dir),
                 render=args.render,
                 save_videos=args.save_videos,
-                save_plots=True
+                save_plots=True,
+                log_dir=str(log_dir),
+                max_episode_steps=100  # Short episodes for testing
             )
-            print(f"✅ Evaluation completed: {eval_dir}")
+            
+            log_message(f"✅ Evaluation completed: {eval_dir}")
+            log_message(f"   Mean Return: {results['mean_return']:.2f} ± {results['std_return']:.2f}")
+            log_message(f"   Success Rate: {results['success_rate']:.2%}")
         else:
-            print("⏭️  Skipping evaluation")
+            log_message("⏭️  Skipping evaluation")
         
         # Create summary
         summary = {
@@ -291,24 +220,30 @@ def main():
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
         
-        print("\n" + "="*80)
-        print("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
-        print("="*80)
-        print(f"Experiment: {args.experiment_name}")
-        print(f"Output directory: {output_dir}")
+        log_message("\n" + "="*80)
+        log_message("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
+        log_message("="*80)
+        log_message(f"Experiment: {args.experiment_name}")
+        log_message(f"Output directory: {output_dir}")
         if dataset_path:
-            print(f"Dataset: {dataset_path}")
+            log_message(f"Dataset: {dataset_path}")
         if model_path:
-            print(f"Model: {model_path}")
+            log_message(f"Model: {model_path}")
         if not args.skip_evaluation:
-            print(f"Evaluation: {eval_dir}")
-        print(f"Summary: {summary_path}")
-        print("="*80)
+            log_message(f"Evaluation: {eval_dir}")
+        log_message(f"Summary: {summary_path}")
+        log_message(f"Logs: {log_dir}")
+        log_message("="*80)
         
     except Exception as e:
-        print(f"\n❌ PIPELINE FAILED: {str(e)}")
+        log_message(f"\n❌ PIPELINE FAILED: {str(e)}")
         import traceback
         traceback.print_exc()
+        
+        # Log full traceback to file
+        with open(main_log_path, 'a') as f:
+            f.write(f"\n{time.strftime('%Y-%m-%d %H:%M:%S')} - FULL TRACEBACK:\n")
+            traceback.print_exc(file=f)
         
         # Save error info
         error_info = {
