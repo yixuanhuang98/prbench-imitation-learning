@@ -4,21 +4,19 @@ environments."""
 import pickle
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import gymnasium as gym
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import prbench
-import torch
-from datasets import Array2D, Array3D, Features, Image, Value, Video
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from datasets import Array2D, Array3D, Features, Value  # type: ignore
+from matplotlib import animation
 
 
-def setup_environment():
+def setup_environment() -> None:
     """Register all prbench environments."""
-    prbench.register_all_environments()
+    prbench.register_all_environments()  # type: ignore
 
 
 def get_available_environments() -> Dict[str, str]:
@@ -90,17 +88,21 @@ def create_dataset_features(
     # Extract state and image dimensions
     if isinstance(obs_space, gym.spaces.Dict):
         if "state" in obs_space.spaces:
-            state_dim = obs_space.spaces["state"].shape[0]
+            state_shape = obs_space.spaces["state"].shape
+            state_dim = state_shape[0] if state_shape is not None else 4
         else:
             state_dim = 4  # Default fallback
 
         if "image" in obs_space.spaces:
             image_shape = obs_space.spaces["image"].shape
+            if image_shape is None:
+                image_shape = (image_height, image_width, 3)
         else:
             image_shape = (image_height, image_width, 3)  # Default RGB
     else:
         # Fallback for non-dict observation spaces
-        state_dim = obs_space.shape[0] if hasattr(obs_space, "shape") else 4
+        obs_shape = getattr(obs_space, "shape", None)
+        state_dim = obs_shape[0] if obs_shape is not None else 4
         image_shape = (image_height, image_width, 3)
 
     # Action dimension
@@ -134,8 +136,8 @@ def generate_random_trajectory(
     env: gym.Env,
     max_steps: int = 1000,
     save_video: bool = False,
-    video_path: str = None,
-) -> Tuple[List[Dict], bool]:
+    video_path: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], bool]:
     """Generate a single random trajectory.
 
     Args:
@@ -147,8 +149,8 @@ def generate_random_trajectory(
     Returns:
         Tuple of (trajectory, success_flag)
     """
-    trajectory = []
-    frames = [] if save_video else None
+    trajectory: List[Dict[str, Any]] = []
+    frames: Optional[List[Any]] = [] if save_video else None
 
     try:
         obs, info = env.reset()
@@ -158,10 +160,10 @@ def generate_random_trajectory(
         # Capture initial frame if saving video
         if save_video:
             try:
-                frame = env.render()
-                if frame is not None:
+                frame: Any = env.render()
+                if frame is not None and frames is not None:
                     frames.append(frame)
-            except:
+            except Exception:  # pylint: disable=broad-except
                 pass  # Skip if rendering fails
 
         while step_count < max_steps:
@@ -185,15 +187,15 @@ def generate_random_trajectory(
             trajectory.append(transition)
 
             # Capture frame if saving video
-            if save_video:
+            if save_video and frames is not None:
                 try:
                     frame = env.render()
                     if frame is not None:
                         frames.append(frame)
-                except:
+                except Exception:  # pylint: disable=broad-except
                     pass  # Skip if rendering fails
 
-            total_reward += reward
+            total_reward += float(reward)
             step_count += 1
 
             if done:
@@ -211,7 +213,8 @@ def generate_random_trajectory(
             "success", False
         )  # Random trajectories are rarely successful
         print(
-            f"  Generated trajectory: {len(trajectory)} steps, reward: {total_reward:.2f}, success: {success}"
+            f"  Generated trajectory: {len(trajectory)} steps, "
+            f"reward: {total_reward:.2f}, success: {success}"
         )
 
         return trajectory, success
@@ -301,14 +304,14 @@ def generate_lerobot_dataset(
     """
 
     # Setup logging
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    data_log_path = log_dir / "data_generation.log"
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
+    data_log_path = log_dir_path / "data_generation.log"
 
     def log_message(message: str):
         """Log message to both console and file."""
         print(message)
-        with open(data_log_path, "a") as f:
+        with open(data_log_path, "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
     # Setup environment
@@ -339,7 +342,7 @@ def generate_lerobot_dataset(
         videos_dir = output_path / "videos"
         videos_dir.mkdir(parents=True, exist_ok=True)
 
-    log_message(f"Starting data generation:")
+    log_message("Starting data generation:")
     log_message(f"  Environment: {env_name} ({env_id})")
     log_message(f"  Dataset: {dataset_name}")
     log_message(f"  Episodes: {num_episodes}")
@@ -368,7 +371,9 @@ def generate_lerobot_dataset(
                 video_path=video_path,
             )
         else:
-            raise ValueError(f"Unknown data type: {data_type}. Only 'random' is supported.")
+            raise ValueError(
+                f"Unknown data type: {data_type}. Only 'random' is supported."
+            )
 
         if trajectory:
             # Convert to dataset format
@@ -383,9 +388,9 @@ def generate_lerobot_dataset(
             if success:
                 successful_episodes += 1
 
-    env.close()
+    env.close()  # type: ignore
 
-    log_message(f"Data generation completed:")
+    log_message("Data generation completed:")
     log_message(f"  Total episodes: {num_episodes}")
     log_message(f"  Successful episodes: {successful_episodes}")
     log_message(f"  Total frames: {total_frames}")
@@ -416,10 +421,10 @@ def generate_lerobot_dataset(
     log_message(f"Dataset saved to: {pickle_path}")
 
     # Also save metadata as JSON for easy inspection
-    import json
+    import json  # pylint: disable=import-outside-toplevel
 
     metadata_path = output_path / "metadata.json"
-    with open(metadata_path, "w") as f:
+    with open(metadata_path, "w", encoding="utf-8") as f:  # type: ignore
         json.dump(dataset_dict["metadata"], f, indent=2)
 
     log_message(f"Metadata saved to: {metadata_path}")

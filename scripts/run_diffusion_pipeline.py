@@ -4,14 +4,15 @@ policies on geom2d environments."""
 
 import argparse
 import json
-import os
 import sys
 import time
+import traceback
 from pathlib import Path
 
 # Add src to path to import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# pylint: disable=wrong-import-position
 from prbench_imitation_learning import (
     evaluate_policy,
     generate_lerobot_dataset,
@@ -22,6 +23,7 @@ from prbench_imitation_learning import (
 
 
 def main():
+    """Main function to run the complete diffusion policy pipeline."""
     # Get available environments dynamically
     try:
         available_envs = get_available_environments()
@@ -43,7 +45,10 @@ def main():
         type=str,
         default=default_env,
         choices=env_choices,
-        help=f"Environment name. Available: {', '.join(env_choices[:10])}{'...' if len(env_choices) > 10 else ''}",
+        help=(
+            f"Environment name. Available: {', '.join(env_choices[:10])}"
+            f"{'...' if len(env_choices) > 10 else ''}"
+        ),
     )
     parser.add_argument(
         "--data-episodes",
@@ -169,7 +174,7 @@ def main():
     def log_message(message: str):
         """Log message to both console and file."""
         print(message)
-        with open(main_log_path, "a") as f:
+        with open(main_log_path, "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
     log_message("=" * 80)
@@ -200,7 +205,7 @@ def main():
     }
 
     config_path = output_dir / "experiment_config.json"
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding="utf-8") as f:
         json.dump(experiment_config, f, indent=2)
     log_message(f"Experiment config saved to: {config_path}")
 
@@ -232,7 +237,7 @@ def main():
 
         # Step 2: Training
         if not args.skip_training:
-            log_message(f"\n🔄 STEP 2: Training diffusion policy")
+            log_message("\n🔄 STEP 2: Training diffusion policy")
 
             # Get default config and update with user settings
             train_config = get_default_training_config()
@@ -261,7 +266,7 @@ def main():
 
         # Step 3: Evaluation
         if not args.skip_evaluation:
-            log_message(f"\n🔄 STEP 3: Evaluating trained policy")
+            log_message("\n🔄 STEP 3: Evaluating trained policy")
 
             # Get environment ID
             env_id = available_envs.get(args.env, args.env)
@@ -280,7 +285,8 @@ def main():
 
             log_message(f"✅ Evaluation completed: {eval_dir}")
             log_message(
-                f"   Mean Return: {results['mean_return']:.2f} ± {results['std_return']:.2f}"
+                f"   Mean Return: {results['mean_return']:.2f} ± "
+                f"{results['std_return']:.2f}"
             )
             log_message(f"   Success Rate: {results['success_rate']:.2%}")
         else:
@@ -297,7 +303,7 @@ def main():
         }
 
         summary_path = output_dir / "pipeline_summary.json"
-        with open(summary_path, "w") as f:
+        with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
 
         log_message("\n" + "=" * 80)
@@ -317,12 +323,10 @@ def main():
 
     except Exception as e:
         log_message(f"\n❌ PIPELINE FAILED: {str(e)}")
-        import traceback
-
         traceback.print_exc()
 
         # Log full traceback to file
-        with open(main_log_path, "a") as f:
+        with open(main_log_path, "a", encoding="utf-8") as f:
             f.write(f"\n{time.strftime('%Y-%m-%d %H:%M:%S')} - FULL TRACEBACK:\n")
             traceback.print_exc(file=f)
 
@@ -335,7 +339,7 @@ def main():
         }
 
         error_path = output_dir / "pipeline_error.json"
-        with open(error_path, "w") as f:
+        with open(error_path, "w", encoding="utf-8") as f:
             json.dump(error_info, f, indent=2)
 
         sys.exit(1)

@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import gymnasium as gym
-import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import prbench
 import torch
+from matplotlib import animation
 
 from .policy import DiffusionPolicy
 
@@ -66,7 +66,8 @@ class PolicyEvaluator:
         model.eval()
 
         print(
-            f"Model loaded successfully (epoch {checkpoint['epoch']}, loss: {checkpoint['loss']:.6f})"
+            f"Model loaded successfully (epoch {checkpoint['epoch']}, "
+            f"loss: {checkpoint['loss']:.6f})"
         )
         return model, config
 
@@ -74,7 +75,8 @@ class PolicyEvaluator:
         """Predict action for a single observation.
 
         Args:
-            observation: Dictionary containing 'state' and optionally 'image', or numpy array
+            observation: Dictionary containing 'state' and optionally 'image',
+                         or numpy array
 
         Returns:
             Predicted action array
@@ -170,7 +172,7 @@ class PolicyEvaluator:
         def log_message(message: str):
             """Log message to both console and file."""
             print(message)
-            with open(eval_log_path, "a") as f:
+            with open(eval_log_path, "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
         log_message(f"Starting evaluation on {env_id}")
@@ -186,8 +188,7 @@ class PolicyEvaluator:
             episode_length = 0
             trajectory = []
 
-            if save_videos:
-                frames = []
+            frames = [] if save_videos else None
 
             done = False
             while not done and episode_length < max_episode_steps:
@@ -213,7 +214,8 @@ class PolicyEvaluator:
                 # Log progress every 100 steps to show activity
                 if episode_length % 100 == 0:
                     log_message(
-                        f"  Episode {episode+1}, Step {episode_length}, Reward: {episode_return:.2f}"
+                        f"  Episode {episode+1}, Step {episode_length}, "
+                        f"Reward: {episode_return:.2f}"
                     )
 
                 trajectory.append(
@@ -229,12 +231,12 @@ class PolicyEvaluator:
                     }
                 )
 
-                if save_videos and render:
+                if save_videos and render and frames is not None:
                     try:
                         frame = env.render()
                         if frame is not None:
                             frames.append(frame)
-                    except:
+                    except Exception:  # pylint: disable=broad-except
                         pass  # Skip if rendering fails
 
                 obs = next_obs
@@ -256,7 +258,8 @@ class PolicyEvaluator:
 
             log_message(
                 f"Episode {episode+1}/{num_episodes}: "
-                f"Return={episode_return:.2f}, Length={episode_length}, Success={success}"
+                f"Return={episode_return:.2f}, Length={episode_length}, "
+                f"Success={success}"
             )
 
             # Save video if requested
@@ -293,7 +296,7 @@ class PolicyEvaluator:
 
         # Save results
         results_path = output_dir / "results.json"
-        with open(results_path, "w") as f:
+        with open(results_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
         log_message(f"Results saved to {results_path}")
 

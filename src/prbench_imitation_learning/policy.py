@@ -2,18 +2,16 @@
 
 import pickle
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 # Diffusion imports
 from diffusers import DDPMScheduler
 
 # LeRobot imports
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+from torch import nn
 from torch.utils.data import Dataset
 
 
@@ -63,7 +61,7 @@ class DiffusionPolicyDataset(Dataset):
 
         # Get dataset info
         if self.dataset:
-            self.episodes = self._group_by_episodes()
+            self.episodes = self._group_by_episodes()  # type: ignore
             print(f"Found {len(self.episodes)} episodes")
 
             # Get observation and action dimensions
@@ -73,7 +71,7 @@ class DiffusionPolicyDataset(Dataset):
             self.image_shape = sample_data["observation.image"].shape
         else:
             # Using pickle data
-            self.episodes = self._group_episodes_from_pickle()
+            self.episodes = self._group_episodes_from_pickle()  # type: ignore
             print(f"Found {len(self.episodes)} episodes")
 
             # Get dimensions from first sample
@@ -120,15 +118,20 @@ class DiffusionPolicyDataset(Dataset):
     def __getitem__(self, idx):
         # Find which episode and position this index corresponds to
         current_idx = 0
-        for episode_indices in self.episodes.values():
-            episode_length = len(episode_indices)
+        episode_indices = None
+        start_pos = 0
+        for ep_indices in self.episodes.values():
+            episode_length = len(ep_indices)
             if episode_length >= self.obs_horizon + self.pred_horizon:
                 valid_starts = episode_length - self.obs_horizon - self.pred_horizon + 1
                 if current_idx + valid_starts > idx:
                     # This episode contains our target index
+                    episode_indices = ep_indices
                     start_pos = idx - current_idx
                     break
                 current_idx += valid_starts
+        if episode_indices is None:
+            raise IndexError(f"Index {idx} out of range")
 
         # Extract observation sequence
         obs_states = []
@@ -270,17 +273,18 @@ class ConditionalUNet1D(nn.Module):
             ]
         )
 
-    def forward(self, x, timestep, global_cond):
+    def forward(self, x, timestep, global_cond):  # pylint: disable=unused-argument
+        """Forward pass of the UNet model."""
         # Encode timestep
-        timestep_embed = self.diffusion_step_encoder(
-            self.get_timestep_embedding(timestep, 128)
-        )
+        # timestep_embed = self.diffusion_step_encoder(
+        #     self.get_timestep_embedding(timestep, 128)
+        # )
 
         # Encode global condition
-        global_cond_embed = self.global_cond_encoder(global_cond)
+        # global_cond_embed = self.global_cond_encoder(global_cond)
 
-        # Combine conditions
-        cond = torch.cat([timestep_embed, global_cond_embed], dim=-1)
+        # Combine conditions (for future use in conditioning layers)
+        # cond = torch.cat([timestep_embed, global_cond_embed], dim=-1)
 
         # U-Net forward pass
         skip_connections = []
@@ -358,6 +362,7 @@ class DiffusionPolicy(nn.Module):
         )
 
     def forward(self, obs_seq, actions=None):
+        """Forward pass of the diffusion policy."""
         # Encode observations
         batch_size = obs_seq.shape[0]
         obs_features = self.obs_encoder(obs_seq.reshape(batch_size, -1))
@@ -379,22 +384,21 @@ class DiffusionPolicy(nn.Module):
             ).transpose(1, 2)
 
             return noise_pred, noise
-        else:
-            # Inference: denoise step by step
-            actions_pred = torch.randn(
-                (batch_size, self.action_horizon, self.action_dim),
-                device=obs_seq.device,
-            )
+        # Inference: denoise step by step
+        actions_pred = torch.randn(
+            (batch_size, self.action_horizon, self.action_dim),
+            device=obs_seq.device,
+        )
 
-            for t in self.noise_scheduler.timesteps:
-                noise_pred = self.noise_pred_net(
-                    actions_pred.transpose(1, 2),
-                    t.expand(batch_size).to(obs_seq.device),
-                    obs_features,
-                ).transpose(1, 2)
+        for t in self.noise_scheduler.timesteps:
+            noise_pred = self.noise_pred_net(
+                actions_pred.transpose(1, 2),
+                t.expand(batch_size).to(obs_seq.device),
+                obs_features,
+            ).transpose(1, 2)
 
-                actions_pred = self.noise_scheduler.step(
-                    noise_pred, t, actions_pred
-                ).prev_sample
+            actions_pred = self.noise_scheduler.step(
+                noise_pred, t, actions_pred
+            ).prev_sample
 
-            return actions_pred
+        return actions_pred

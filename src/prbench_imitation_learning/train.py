@@ -1,14 +1,13 @@
 """Training functionality for diffusion policies."""
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict
 
 import torch
 import torch.nn.functional as F
-import torch.optim as optim
 import wandb
+from torch import optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
@@ -34,8 +33,8 @@ def train_diffusion_policy(
     """
 
     # Create log directory
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
 
     # Set device
     if config.get("force_cpu", False):
@@ -57,7 +56,7 @@ def train_diffusion_policy(
         batch_size=config["batch_size"],
         shuffle=True,
         num_workers=config["num_workers"],
-        persistent_workers=True if config["num_workers"] > 0 else False,
+        persistent_workers=config["num_workers"] > 0,
     )
 
     # Create model
@@ -85,16 +84,16 @@ def train_diffusion_policy(
             project="diffusion-policy-geom2d",
             config=config,
             name=f"diffusion_policy_{int(time.time())}",
-            dir=str(log_dir),
+            dir=str(log_dir_path),
         )
 
     # Setup logging
-    train_log_path = log_dir / "training.log"
+    train_log_path = log_dir_path / "training.log"
 
     def log_message(message: str):
         """Log message to both console and file."""
         print(message)
-        with open(train_log_path, "a") as f:
+        with open(train_log_path, "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
 
     log_message("Starting training...")
