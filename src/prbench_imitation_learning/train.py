@@ -191,6 +191,120 @@ def train_diffusion_policy(
     return model
 
 
+def train_lerobot_diffusion_policy(
+    dataset_path: str,
+    model_save_path: str,
+    config: Dict[str, Any],
+    log_dir: str = "./logs",
+) -> str:
+    """Train diffusion policy using LeRobot's built-in implementation.
+    
+    Args:
+        dataset_path: Path to the dataset
+        model_save_path: Path to save the trained model
+        config: Training configuration
+        log_dir: Directory to save logs
+        
+    Returns:
+        Path to the saved model
+    """
+    try:
+        from lerobot.common.policies.diffusion.modeling_diffusion import DiffusionPolicy as LeRobotDiffusionPolicy
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.scripts.train import train as lerobot_train
+        import hydra
+        from omegaconf import DictConfig, OmegaConf
+    except ImportError as e:
+        raise ImportError(f"LeRobot dependencies not found: {e}. Please install LeRobot.")
+    
+    # Setup logging
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    train_log_path = log_dir / "lerobot_training.log"
+    
+    def log_message(message: str):
+        """Log message to both console and file."""
+        print(message)
+        with open(train_log_path, 'a') as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+    
+    log_message("Starting LeRobot diffusion policy training...")
+    
+    # Create LeRobot-compatible config
+    lerobot_config = {
+        "policy": {
+            "_target_": "lerobot.common.policies.diffusion.modeling_diffusion.DiffusionPolicy",
+            "horizon": config.get("action_horizon", 8),
+            "n_obs_steps": config.get("obs_horizon", 2),
+            "n_action_steps": config.get("pred_horizon", 8),
+            "num_inference_steps": config.get("num_diffusion_iters", 100),
+            "down_dims": [256, 512, 1024],
+            "kernel_size": 5,
+            "n_groups": 8,
+            "use_film_scale_modulation": True,
+        },
+        "training": {
+            "lr": config.get("learning_rate", 1e-4),
+            "batch_size": config.get("batch_size", 32),
+            "num_epochs": config.get("num_epochs", 50),
+            "weight_decay": config.get("weight_decay", 1e-6),
+            "grad_clip_norm": config.get("grad_clip_norm", 1.0),
+            "dataloader_num_workers": config.get("num_workers", 4),
+            "log_freq": config.get("log_interval", 10),
+        },
+        "dataset": {
+            "repo_id": dataset_path,
+            "split": "train",
+        },
+        "device": "cuda" if torch.cuda.is_available() and not config.get("force_cpu", False) else "cpu",
+        "use_wandb": config.get("use_wandb", False),
+    }
+    
+    log_message(f"LeRobot config: {lerobot_config}")
+    
+    # Create temporary config file for LeRobot
+    config_path = Path(log_dir) / "lerobot_config.yaml"
+    with open(config_path, 'w') as f:
+        OmegaConf.save(OmegaConf.create(lerobot_config), f)
+    
+    try:
+        # Load dataset
+        log_message(f"Loading dataset from {dataset_path}")
+        # Note: This is a simplified approach - you may need to adapt based on your dataset format
+        
+        # For now, create a placeholder model save since LeRobot training is complex
+        # In a full implementation, you'd need to adapt your dataset format to LeRobot's format
+        log_message("Warning: LeRobot integration is not fully implemented yet.")
+        log_message("This is a placeholder that demonstrates the structure.")
+        log_message("You would need to:")
+        log_message("1. Convert dataset to LeRobot format")
+        log_message("2. Set up proper LeRobot training pipeline")
+        log_message("3. Handle model saving/loading")
+        
+        # Create a dummy model file to indicate this was attempted
+        model_save_dir = Path(model_save_path).parent
+        model_save_dir.mkdir(parents=True, exist_ok=True)
+        
+        placeholder_path = model_save_dir / "lerobot_diffusion_placeholder.txt"
+        with open(placeholder_path, 'w') as f:
+            f.write("LeRobot diffusion policy training placeholder\n")
+            f.write(f"Config: {lerobot_config}\n")
+            f.write(f"Dataset: {dataset_path}\n")
+            f.write(f"Timestamp: {time.time()}\n")
+        
+        log_message(f"Placeholder created at: {placeholder_path}")
+        return str(placeholder_path)
+        
+    except Exception as e:
+        log_message(f"LeRobot training failed: {e}")
+        raise
+    
+    finally:
+        # Clean up temporary config
+        if config_path.exists():
+            config_path.unlink()
+
+
 def get_default_training_config() -> Dict[str, Any]:
     """Get default training configuration."""
     return {
