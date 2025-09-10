@@ -7,10 +7,33 @@ name = "prbench_imitation_learning"
 version = "0.1.0"
 description = "Imitation learning baselines for PRBench."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
-   "matplotlib",
-   "numpy",
+    # Core ML/AI libraries
+    "torch>=2.0.0",
+    "numpy",
+    
+    # Diffusion and ML libraries
+    "diffusers",
+    
+    # Data handling
+    "datasets",
+    
+    # Robotics and environments
+    "gymnasium",
+    "prbench@git+https://github.com/Princeton-Robot-Planning-and-Learning/prbench.git",
+    
+    # LeRobot for datasets
+    "lerobot",
+    
+    # Visualization and plotting
+    "matplotlib",
+    
+    # Experiment tracking
+    "wandb",
+    
+    # Utilities
+    "tqdm",
 ]
 
 [project.optional-dependencies]
@@ -32,10 +55,10 @@ prbench_imitation_learning = ["py.typed"]
 
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py310"]
 
 [tool.isort]
-py_version = 311
+py_version = 310
 profile = "black"
 multi_line_output = 2
 skip_glob = ["venv/*", ".venv/*", "third-party/*"]
@@ -55,6 +78,14 @@ exclude = ["venv/*", ".venv/*", "third-party/*"]
 [[tool.mypy.overrides]]
 module = [
     "matplotlib.*",
+    "torch.*",
+    "diffusers.*",
+    "datasets.*",
+    "gymnasium.*",
+    "prbench.*",
+    "lerobot.*",
+    "wandb.*",
+    "tqdm.*",
 ]
 ignore_missing_imports = true
 
