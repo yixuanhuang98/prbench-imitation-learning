@@ -44,6 +44,8 @@ def main():
                        help="Number of episodes for data collection")
     parser.add_argument("--data-type", type=str, default="expert", choices=["random", "expert"],
                        help="Type of data to collect")
+    parser.add_argument("--save-demo-videos", action="store_true",
+                       help="Save videos of demonstration trajectories during data generation")
     
     # Training options
     parser.add_argument("--train-epochs", type=int, default=50,
@@ -165,7 +167,8 @@ def main():
                 num_episodes=args.data_episodes,
                 data_type=args.data_type,
                 output_dir=str(dataset_dir),
-                log_dir=str(log_dir)
+                log_dir=str(log_dir),
+                save_videos=args.save_demo_videos
             )
             log_message(f"✅ Data generation completed: {dataset_path}")
         else:
