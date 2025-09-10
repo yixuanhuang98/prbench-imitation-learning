@@ -1,0 +1,3 @@
+[submodule "third-party/prbench"]
+	path = third-party/prbench
+	url = https://github.com/Princeton-Robot-Planning-and-Learning/prbench.git
