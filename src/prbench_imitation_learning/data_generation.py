@@ -15,12 +15,11 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+import prbench
+
 
 def setup_environment():
     """Register all prbench environments."""
-    import sys
-    sys.path.append('/home/yixuan/prbench_dir/prbench/src')
-    import prbench
     prbench.register_all_environments()
 
 
@@ -28,9 +27,6 @@ def get_available_environments() -> Dict[str, str]:
     """Get all available PRBench environments."""
     # First register all environments
     setup_environment()
-    
-    # Import prbench to get all environment IDs
-    import prbench
     
     # Get all registered PRBench environment IDs
     all_env_ids = prbench.get_all_env_ids()

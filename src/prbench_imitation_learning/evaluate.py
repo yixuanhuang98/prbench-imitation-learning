@@ -16,6 +16,8 @@ import torch
 
 from .policy import DiffusionPolicy
 
+import prbench
+
 
 class PolicyEvaluator:
     """Evaluator for trained diffusion policies."""
@@ -139,10 +141,6 @@ class PolicyEvaluator:
         
         # Setup environment
         try:
-            # Add prbench to path and register environments
-            import sys
-            sys.path.append('/home/yixuan/prbench_dir/prbench/src')
-            import prbench
             prbench.register_all_environments()
             
             env = gym.make(env_id)
