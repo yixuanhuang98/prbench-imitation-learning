@@ -23,15 +23,29 @@ def setup_environment():
 
 
 def get_available_environments() -> Dict[str, str]:
-    """Get available geom2d environments."""
-    return {
-        "motion2d": "prbench/Motion2D-p2-v0",
-        "pushpullhook2d": "prbench/PushPullHook2D-v0", 
-        "stickbutton2d": "prbench/StickButton2D-b2-v0",
-        "clutteredretrieval2d": "prbench/ClutteredRetrieval2D-o10-v0",
-        "clutteredstorage2d": "prbench/ClutteredStorage2D-b3-v0",
-        "obstruction2d": "prbench/Obstruction2D-o2-v0"
-    }
+    """Get all available PRBench environments."""
+    # First register all environments
+    setup_environment()
+    
+    # Import prbench to get all environment IDs
+    import prbench
+    
+    # Get all registered PRBench environment IDs
+    all_env_ids = prbench.get_all_env_ids()
+    
+    # Create a mapping of short names to full IDs
+    env_mapping = {}
+    
+    for env_id in sorted(all_env_ids):
+        # Extract a reasonable short name from the full ID
+        # e.g., "prbench/Motion2D-p2-v0" -> "motion2d-p2"
+        if env_id.startswith("prbench/"):
+            short_name = env_id[8:]  # Remove "prbench/" prefix
+            short_name = short_name.replace("-v0", "")  # Remove version suffix
+            short_name = short_name.lower()  # Convert to lowercase
+            env_mapping[short_name] = env_id
+    
+    return env_mapping
 
 
 def create_dataset_features(env: gym.Env, image_height: int = 256, image_width: int = 256) -> Dict[str, Any]:

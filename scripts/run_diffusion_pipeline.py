@@ -23,13 +23,23 @@ from prbench_imitation_learning import (
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Complete diffusion policy pipeline for geom2d environments")
+    # Get available environments dynamically
+    try:
+        available_envs = get_available_environments()
+        env_choices = list(available_envs.keys())
+        default_env = "motion2d-p2" if "motion2d-p2" in env_choices else env_choices[0]
+    except Exception as e:
+        print(f"Warning: Could not load environments dynamically: {e}")
+        # Fallback to a few common ones
+        env_choices = ["motion2d-p2", "pushpullhook2d", "stickbutton2d-b2"]
+        default_env = "motion2d-p2"
+    
+    parser = argparse.ArgumentParser(description="Complete diffusion policy pipeline for all PRBench environments")
     
     # Environment and data options
-    parser.add_argument("--env", type=str, default="motion2d",
-                       choices=["motion2d", "pushpullhook2d", "stickbutton2d", 
-                               "clutteredretrieval2d", "clutteredstorage2d", "obstruction2d"],
-                       help="Environment name")
+    parser.add_argument("--env", type=str, default=default_env,
+                       choices=env_choices,
+                       help=f"Environment name. Available: {', '.join(env_choices[:10])}{'...' if len(env_choices) > 10 else ''}")
     parser.add_argument("--data-episodes", type=int, default=20,
                        help="Number of episodes for data collection")
     parser.add_argument("--data-type", type=str, default="expert", choices=["random", "expert"],
@@ -72,8 +82,20 @@ def main():
                        help="Experiment name (auto-generated if not provided)")
     parser.add_argument("--log-dir", type=str, default="./logs",
                        help="Directory for logs")
+    parser.add_argument("--list-envs", action="store_true",
+                       help="List all available environments and exit")
     
     args = parser.parse_args()
+    
+    # Handle list environments command
+    if args.list_envs:
+        print("Available PRBench Environments:")
+        print("=" * 50)
+        for short_name, full_id in sorted(available_envs.items()):
+            print(f"  {short_name:<25} -> {full_id}")
+        print(f"\nTotal: {len(available_envs)} environments")
+        print("\nUsage: --env <short_name>")
+        return
     
     # Generate experiment name if not provided
     if not args.experiment_name:
@@ -184,7 +206,6 @@ def main():
             log_message(f"\n🔄 STEP 3: Evaluating trained policy")
             
             # Get environment ID
-            available_envs = get_available_environments()
             env_id = available_envs.get(args.env, args.env)
             
             results = evaluate_policy(
