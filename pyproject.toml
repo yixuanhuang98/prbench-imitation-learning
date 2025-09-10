@@ -21,7 +21,6 @@ dependencies = [
     
     # Robotics and environments
     "gymnasium",
-    "prbench@git+https://github.com/Princeton-Robot-Planning-and-Learning/prbench.git",
     
     # LeRobot for datasets
     "lerobot",
