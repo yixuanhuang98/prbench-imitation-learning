@@ -270,7 +270,6 @@ def main():
                 model_path=model_path,
                 env_id=env_id,
                 num_episodes=args.eval_episodes,
-                device="cpu",  # Force CPU for consistency
                 output_dir=str(eval_dir),
                 render=args.render,
                 save_videos=args.save_videos,

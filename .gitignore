@@ -157,6 +157,7 @@ cython_debug/
 # Diffusion pipeline results
 diffusion_pipeline_results/
 logs/
+local_README/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
