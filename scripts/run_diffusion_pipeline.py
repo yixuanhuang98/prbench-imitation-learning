@@ -14,12 +14,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from prbench_imitation_learning import (
     evaluate_policy,
-    evaluate_lerobot_policy,
     generate_lerobot_dataset,
     get_available_environments,
     get_default_training_config,
     train_diffusion_policy,
-    train_lerobot_diffusion_policy,
 )
 
 
@@ -78,10 +76,6 @@ def main():
     )
     parser.add_argument(
         "--use-wandb", action="store_true", help="Use Weights & Biases for logging"
-    )
-    parser.add_argument(
-        "--use-lerobot-policy", action="store_true", 
-        help="Use LeRobot's built-in diffusion policy instead of custom implementation"
     )
 
     # Evaluation options
@@ -198,12 +192,10 @@ def main():
         "environment": args.env,
         "data_episodes": args.data_episodes,
         "data_type": args.data_type,
-        "policy_type": "lerobot" if args.use_lerobot_policy else "custom",
         "train_epochs": args.train_epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
         "eval_episodes": args.eval_episodes,
-        "use_lerobot_policy": args.use_lerobot_policy,
         "timestamp": time.time(),
     }
 
@@ -240,10 +232,7 @@ def main():
 
         # Step 2: Training
         if not args.skip_training:
-            if args.use_lerobot_policy:
-                log_message(f"\n🔄 STEP 2: Training LeRobot diffusion policy")
-            else:
-                log_message(f"\n🔄 STEP 2: Training custom diffusion policy")
+            log_message(f"\n🔄 STEP 2: Training diffusion policy")
 
             # Get default config and update with user settings
             train_config = get_default_training_config()
@@ -257,36 +246,13 @@ def main():
             )
 
             model_path = str(model_dir / f"{args.experiment_name}_model.pth")
-            
-            if args.use_lerobot_policy:
-                # Use LeRobot's diffusion policy implementation
-                try:
-                    model_path = train_lerobot_diffusion_policy(
-                        dataset_path=dataset_path,
-                        model_save_path=model_path,
-                        config=train_config,
-                        log_dir=str(log_dir),
-                    )
-                    log_message(f"✅ LeRobot training completed: {model_path}")
-                except ImportError as e:
-                    log_message(f"⚠️  LeRobot not available: {e}")
-                    log_message("⏭️  Falling back to custom implementation")
-                    train_diffusion_policy(
-                        dataset_path=dataset_path,
-                        model_save_path=model_path,
-                        config=train_config,
-                        log_dir=str(log_dir),
-                    )
-                    log_message(f"✅ Custom training completed: {model_path}")
-            else:
-                # Use custom diffusion policy implementation
-                train_diffusion_policy(
-                    dataset_path=dataset_path,
-                    model_save_path=model_path,
-                    config=train_config,
-                    log_dir=str(log_dir),
-                )
-                log_message(f"✅ Custom training completed: {model_path}")
+            train_diffusion_policy(
+                dataset_path=dataset_path,
+                model_save_path=model_path,
+                config=train_config,
+                log_dir=str(log_dir),
+            )
+            log_message(f"✅ Training completed: {model_path}")
         else:
             model_path = args.model_path
             if not model_path:
@@ -295,59 +261,24 @@ def main():
 
         # Step 3: Evaluation
         if not args.skip_evaluation:
-            if args.use_lerobot_policy:
-                log_message(f"\n🔄 STEP 3: Evaluating LeRobot trained policy")
-            else:
-                log_message(f"\n🔄 STEP 3: Evaluating custom trained policy")
+            log_message(f"\n🔄 STEP 3: Evaluating trained policy")
 
             # Get environment ID
             env_id = available_envs.get(args.env, args.env)
 
-            if args.use_lerobot_policy:
-                # Use LeRobot evaluation
-                try:
-                    results = evaluate_lerobot_policy(
-                        model_path=model_path,
-                        env_id=env_id,
-                        num_episodes=args.eval_episodes,
-                        output_dir=str(eval_dir),
-                        render=args.render,
-                        save_videos=args.save_videos,
-                        save_plots=True,
-                        log_dir=str(log_dir),
-                        max_episode_steps=100,  # Short episodes for testing
-                    )
-                    log_message(f"✅ LeRobot evaluation completed: {eval_dir}")
-                except ImportError as e:
-                    log_message(f"⚠️  LeRobot evaluation not available: {e}")
-                    log_message("⏭️  Falling back to custom evaluation")
-                    results = evaluate_policy(
-                        model_path=model_path,
-                        env_id=env_id,
-                        num_episodes=args.eval_episodes,
-                        output_dir=str(eval_dir),
-                        render=args.render,
-                        save_videos=args.save_videos,
-                        save_plots=True,
-                        log_dir=str(log_dir),
-                        max_episode_steps=100,
-                    )
-                    log_message(f"✅ Custom evaluation completed: {eval_dir}")
-            else:
-                # Use custom evaluation
-                results = evaluate_policy(
-                    model_path=model_path,
-                    env_id=env_id,
-                    num_episodes=args.eval_episodes,
-                    output_dir=str(eval_dir),
-                    render=args.render,
-                    save_videos=args.save_videos,
-                    save_plots=True,
-                    log_dir=str(log_dir),
-                    max_episode_steps=100,  # Short episodes for testing
-                )
-                log_message(f"✅ Custom evaluation completed: {eval_dir}")
+            results = evaluate_policy(
+                model_path=model_path,
+                env_id=env_id,
+                num_episodes=args.eval_episodes,
+                output_dir=str(eval_dir),
+                render=args.render,
+                save_videos=args.save_videos,
+                save_plots=True,
+                log_dir=str(log_dir),
+                max_episode_steps=100,  # Short episodes for testing
+            )
 
+            log_message(f"✅ Evaluation completed: {eval_dir}")
             log_message(
                 f"   Mean Return: {results['mean_return']:.2f} ± {results['std_return']:.2f}"
             )
