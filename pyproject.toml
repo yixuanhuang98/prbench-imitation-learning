@@ -9,29 +9,14 @@ description = "Imitation learning baselines for PRBench."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    # Core ML/AI libraries
     "torch>=2.0.0",
     "numpy",
-    
-    # Diffusion and ML libraries
     "diffusers",
-    
-    # Data handling
     "datasets",
-    
-    # Robotics and environments
     "gymnasium",
-    
-    # LeRobot for datasets
     "lerobot",
-    
-    # Visualization and plotting
     "matplotlib",
-    
-    # Experiment tracking
     "wandb",
-    
-    # Utilities
     "tqdm",
 ]
 
