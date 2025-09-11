@@ -21,6 +21,27 @@ from prbench_imitation_learning import (
     train_diffusion_policy,
 )
 
+# Add third-party modules to path for bilevel planning
+script_dir = Path(__file__).parent
+project_root = script_dir.parent
+third_party_bilevel = project_root / "third-party" / "prbench-bilevel-planning" / "third-party" / "bilevel-planning" / "src"
+third_party_prbench_bilevel = project_root / "third-party" / "prbench-bilevel-planning" / "src"
+third_party_prbench_models = project_root / "third-party" / "prbench-bilevel-planning" / "third-party" / "prbench-models" / "src"
+
+if third_party_bilevel.exists():
+    sys.path.insert(0, str(third_party_bilevel))
+if third_party_prbench_bilevel.exists():
+    sys.path.insert(0, str(third_party_prbench_bilevel))
+if third_party_prbench_models.exists():
+    sys.path.insert(0, str(third_party_prbench_models))
+
+# Import expert demonstration collection
+try:
+    from collect_motion2d_demonstrations import collect_motion2d_demonstrations
+    EXPERT_COLLECTION_AVAILABLE = True
+except ImportError:
+    EXPERT_COLLECTION_AVAILABLE = False
+
 
 def main():
     """Main function to run the complete diffusion policy pipeline."""
@@ -60,13 +81,40 @@ def main():
         "--data-type",
         type=str,
         default="random",
-        choices=["random"],
-        help="Type of data to collect (only random supported)",
+        choices=["random", "expert"],
+        help="Type of data to collect (random or expert demonstrations)",
     )
     parser.add_argument(
         "--save-demo-videos",
         action="store_true",
         help="Save videos of demonstration trajectories during data generation",
+    )
+    
+    # Expert demonstration specific options
+    parser.add_argument(
+        "--num-passages",
+        type=int,
+        default=2,
+        choices=[1, 2, 3],
+        help="Number of passages for Motion2D environment (only for expert data)",
+    )
+    parser.add_argument(
+        "--max-abstract-plans",
+        type=int,
+        default=10,
+        help="Maximum abstract plans for BilevelPlanningAgent (only for expert data)",
+    )
+    parser.add_argument(
+        "--samples-per-step",
+        type=int,
+        default=3,
+        help="Samples per planning step for BilevelPlanningAgent (only for expert data)",
+    )
+    parser.add_argument(
+        "--planning-timeout",
+        type=float,
+        default=30.0,
+        help="Planning timeout in seconds for BilevelPlanningAgent (only for expert data)",
     )
 
     # Training options
@@ -203,6 +251,15 @@ def main():
         "eval_episodes": args.eval_episodes,
         "timestamp": time.time(),
     }
+    
+    # Add expert-specific configuration if using expert data
+    if args.data_type == "expert":
+        experiment_config.update({
+            "num_passages": args.num_passages,
+            "max_abstract_plans": args.max_abstract_plans,
+            "samples_per_step": args.samples_per_step,
+            "planning_timeout": args.planning_timeout,
+        })
 
     config_path = output_dir / "experiment_config.json"
     with open(config_path, "w", encoding="utf-8") as f:
@@ -217,15 +274,48 @@ def main():
         if not args.skip_data:
             log_message(f"\n🔄 STEP 1: Generating {args.data_type} data for {args.env}")
             dataset_name = f"{args.env}_{args.data_type}_{args.data_episodes}ep"
-            dataset_path = generate_lerobot_dataset(
-                env_name=args.env,
-                dataset_name=dataset_name,
-                num_episodes=args.data_episodes,
-                data_type=args.data_type,
-                output_dir=str(dataset_dir),
-                log_dir=str(log_dir),
-                save_videos=args.save_demo_videos,
-            )
+            
+            if args.data_type == "expert":
+                # Use expert demonstration collection for Motion2D
+                if not EXPERT_COLLECTION_AVAILABLE:
+                    raise ImportError(
+                        "Expert demonstration collection not available. "
+                        "Make sure collect_motion2d_demonstrations.py is in the same directory "
+                        "and bilevel planning third-party module is available."
+                    )
+                
+                if not args.env.startswith("motion2d"):
+                    raise ValueError(
+                        "Expert demonstrations are currently only supported for Motion2D environments. "
+                        f"Got environment: {args.env}"
+                    )
+                
+                log_message("Using BilevelPlanningAgent for expert demonstrations")
+                log_message("Using bilevel planning from third-party submodule")
+                
+                dataset_path = collect_motion2d_demonstrations(
+                    num_passages=args.num_passages,
+                    num_episodes=args.data_episodes,
+                    output_dir=str(dataset_dir / dataset_name),
+                    max_steps_per_episode=1000,  # Reasonable default for training data
+                    save_videos=args.save_demo_videos,
+                    max_abstract_plans=args.max_abstract_plans,
+                    samples_per_step=args.samples_per_step,
+                    planning_timeout=args.planning_timeout,
+                    seed=123,  # Fixed seed for reproducibility
+                )
+            else:
+                # Use random data generation
+                dataset_path = generate_lerobot_dataset(
+                    env_name=args.env,
+                    dataset_name=dataset_name,
+                    num_episodes=args.data_episodes,
+                    data_type=args.data_type,
+                    output_dir=str(dataset_dir),
+                    log_dir=str(log_dir),
+                    save_videos=args.save_demo_videos,
+                )
+            
             log_message(f"✅ Data generation completed: {dataset_path}")
         else:
             dataset_path = args.dataset_path

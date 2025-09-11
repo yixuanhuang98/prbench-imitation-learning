@@ -14,7 +14,6 @@ dependencies = [
     "diffusers",
     "datasets",
     "gymnasium",
-    "prbench@git+https://github.com/Princeton-Robot-Planning-and-Learning/prbench.git",
     "lerobot",
     "matplotlib",
     "wandb",
