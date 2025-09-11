@@ -13,9 +13,9 @@ This directory contains scripts for collecting expert demonstrations from Motion
 Make sure you have both required conda environments set up:
 
 1. `pr_planning`: For bilevel planning and expert demonstration collection  
-2. `prbenchIL`: For imitation learning training and evaluation
+2. `prbenchIL1`: For imitation learning training and evaluation
 
-**Note**: Currently, expert demonstration collection requires the `pr_planning` environment due to bilevel planning dependencies, while training requires the `prbenchIL` environment.
+**Note**: Currently, expert demonstration collection requires the `pr_planning` environment due to bilevel planning dependencies, while training requires the `prbenchIL1` environment.
 
 ## Usage
 
@@ -55,8 +55,8 @@ python run_diffusion_pipeline.py \
   --skip-training \
   --skip-evaluation
 
-# Step 2: Train and evaluate (requires prbenchIL environment)  
-conda activate prbenchIL
+# Step 2: Train and evaluate (requires prbenchIL1 environment)  
+conda activate prbenchIL1
 python run_diffusion_pipeline.py \
   --env motion2d-p2 \
   --data-type expert \
@@ -123,7 +123,7 @@ python collect_motion2d_demonstrations.py \
 ./run_expert_pipeline.sh --env motion2d-p2 --data-type expert --data-episodes 50 --experiment-name expert_baseline
 
 # Collect random data  
-conda activate prbenchIL
+conda activate prbenchIL1
 python run_diffusion_pipeline.py --env motion2d-p2 --data-type random --data-episodes 50 --experiment-name random_baseline
 ```
 
@@ -150,7 +150,7 @@ diffusion_pipeline_results/
 ## Troubleshooting
 
 ### Environment Issues
-- Make sure both `pr_planning` and `prbencIL` environments are properly set up
+- Make sure both `pr_planning` and `prbenchIL1` environments are properly set up
 - The wrapper script will check for environment existence before running
 
 ### Import Errors

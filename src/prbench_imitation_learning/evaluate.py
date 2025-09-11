@@ -152,7 +152,9 @@ class PolicyEvaluator:
         try:
             prbench.register_all_environments()
 
-            env = gym.make(env_id)
+            # If saving videos, we need to enable rendering
+            render_mode = "rgb_array" if save_videos else None
+            env = gym.make(env_id, render_mode=render_mode)
         except Exception as e:
             print(f"Failed to create environment {env_id}: {e}")
             raise
@@ -231,7 +233,7 @@ class PolicyEvaluator:
                     }
                 )
 
-                if save_videos and render and frames is not None:
+                if save_videos and frames is not None:
                     try:
                         frame = env.render()
                         if frame is not None:
@@ -264,7 +266,7 @@ class PolicyEvaluator:
 
             # Save video if requested
             if save_videos and "frames" in locals() and frames:
-                self._save_video(frames, output_dir / f"episode_{episode}.mp4")
+                self._save_video(frames, output_dir / f"episode_{episode}.gif")
 
         env.close()
 

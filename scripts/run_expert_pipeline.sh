@@ -25,7 +25,7 @@ check_env() {
 
 # Check required environments
 echo "🔍 Checking conda environments..."
-check_env "prbenchIL"
+check_env "prbenchIL1"
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
@@ -49,9 +49,9 @@ for arg in "$@"; do
     PREV_ARG="$arg"
 done
 
-echo "📋 Running pipeline with prbenchIL environment (supports both expert and random data)..."
-# Use prbenchIL environment for everything since it now has working bilevel planning imports
-conda run -n prbenchIL python "${SCRIPT_DIR}/run_diffusion_pipeline.py" "$@"
+echo "📋 Running pipeline with prbenchIL1 environment (supports both expert and random data)..."
+# Use prbenchIL1 environment for everything since it now has working bilevel planning imports
+conda run -n prbenchIL1 python "${SCRIPT_DIR}/run_diffusion_pipeline.py" "$@"
 echo "✅ Pipeline completed successfully!"
 
 echo "======================================"
