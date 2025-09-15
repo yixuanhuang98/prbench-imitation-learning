@@ -370,7 +370,7 @@ def main():
                 save_videos=args.save_videos,
                 save_plots=True,
                 log_dir=str(log_dir),
-                max_episode_steps=100,  # Short episodes for testing
+                max_episode_steps=400,  # Short episodes for testing
             )
 
             log_message(f"✅ Evaluation completed: {eval_dir}")

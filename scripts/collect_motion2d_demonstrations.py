@@ -235,7 +235,8 @@ def collect_motion2d_demonstrations(
         env = RecordVideo(
             env, 
             str(videos_dir), 
-            name_prefix=f"Motion2D-p{num_passages}-expert"
+            name_prefix=f"Motion2D-p{num_passages}-expert",
+            episode_trigger=lambda episode_id: True  # Record every episode
         )
     
     # Create environment models and agent
