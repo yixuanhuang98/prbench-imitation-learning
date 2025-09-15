@@ -19,6 +19,7 @@ from prbench_imitation_learning import (
     get_available_environments,
     get_default_training_config,
     train_diffusion_policy,
+    train_lerobot_diffusion_policy,
 )
 
 # Add third-party modules to path for bilevel planning
@@ -129,6 +130,13 @@ def main():
     )
     parser.add_argument(
         "--use-wandb", action="store_true", help="Use Weights & Biases for logging"
+    )
+    parser.add_argument(
+        "--policy-type",
+        type=str,
+        default="custom",
+        choices=["custom", "lerobot"],
+        help="Type of diffusion policy to use (custom implementation or LeRobot)",
     )
 
     # Evaluation options
@@ -245,6 +253,7 @@ def main():
         "environment": args.env,
         "data_episodes": args.data_episodes,
         "data_type": args.data_type,
+        "policy_type": args.policy_type,
         "train_epochs": args.train_epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
@@ -327,7 +336,7 @@ def main():
 
         # Step 2: Training
         if not args.skip_training:
-            log_message("\n🔄 STEP 2: Training diffusion policy")
+            log_message(f"\n🔄 STEP 2: Training {args.policy_type} diffusion policy")
 
             # Get default config and update with user settings
             train_config = get_default_training_config()
@@ -340,13 +349,22 @@ def main():
                 }
             )
 
-            model_path = str(model_dir / f"{args.experiment_name}_model.pth")
-            train_diffusion_policy(
-                dataset_path=dataset_path,
-                model_save_path=model_path,
-                config=train_config,
-                log_dir=str(log_dir),
-            )
+            model_path = str(model_dir / f"{args.experiment_name}_{args.policy_type}_model.pth")
+            
+            if args.policy_type == "lerobot":
+                train_lerobot_diffusion_policy(
+                    dataset_path=dataset_path,
+                    model_save_path=model_path,
+                    config=train_config,
+                    log_dir=str(log_dir),
+                )
+            else:  # custom
+                train_diffusion_policy(
+                    dataset_path=dataset_path,
+                    model_save_path=model_path,
+                    config=train_config,
+                    log_dir=str(log_dir),
+                )
             log_message(f"✅ Training completed: {model_path}")
         else:
             model_path = args.model_path

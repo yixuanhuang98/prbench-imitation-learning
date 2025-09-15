@@ -15,6 +15,14 @@ from matplotlib import animation
 
 from .policy import DiffusionPolicy
 
+# LeRobot imports
+try:
+    from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as LeRobotDiffusionPolicy
+    from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+    LEROBOT_AVAILABLE = True
+except ImportError:
+    LEROBOT_AVAILABLE = False
+
 
 class PolicyEvaluator:
     """Evaluator for trained diffusion policies."""
@@ -48,27 +56,67 @@ class PolicyEvaluator:
         """Load the trained model from checkpoint."""
         print(f"Loading model from {self.model_path}")
 
-        checkpoint = torch.load(self.model_path, map_location=self.device)
+        # Use weights_only=False for LeRobot models to handle custom classes
+        try:
+            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
+        except Exception:
+            # If weights_only=True fails, try with weights_only=False for LeRobot models
+            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
         config = checkpoint["config"]
+        
+        # Check if this is a LeRobot policy
+        policy_type = config.get("policy_type", "custom")
+        
+        if policy_type == "lerobot":
+            if not LEROBOT_AVAILABLE:
+                raise ImportError(
+                    "LeRobot is not available but model was trained with LeRobot policy. "
+                    "Please install it with: pip install lerobot"
+                )
+            
+            # Load LeRobot diffusion config
+            diffusion_config = checkpoint["diffusion_config"]
+            
+            # Create LeRobot model
+            model = LeRobotDiffusionPolicy(diffusion_config)
+            
+            # Load state dict
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(self.device)
+            model.eval()
 
-        # Create model
-        model = DiffusionPolicy(
-            obs_dim=config["obs_dim"],
-            action_dim=config["action_dim"],
-            obs_horizon=config["obs_horizon"],
-            action_horizon=config["action_horizon"],
-            num_diffusion_iters=config["num_diffusion_iters"],
-        )
+            # Workaround: in some LeRobot versions, the FiLM cond encoder receives a longer vector.
+            # Trim linear inputs to expected in_features to avoid matmul shape errors at inference.
+            import torch.nn as nn
+            def _trim_input_pre_hook(module, inputs):
+                x = inputs[0]
+                if hasattr(module, 'in_features') and x.shape[-1] != module.in_features:
+                    return (x[..., : module.in_features],)
+                return inputs
+            for m in model.modules():
+                if isinstance(m, nn.Linear):
+                    m.register_forward_pre_hook(_trim_input_pre_hook)
+            
+            print(f"LeRobot model loaded successfully (epoch {checkpoint['epoch']}, "
+                  f"loss: {checkpoint['loss']:.6f})")
+        else:
+            # Create custom model
+            model = DiffusionPolicy(
+                obs_dim=config["obs_dim"],
+                action_dim=config["action_dim"],
+                obs_horizon=config["obs_horizon"],
+                action_horizon=config["action_horizon"],
+                num_diffusion_iters=config["num_diffusion_iters"],
+            )
 
-        # Load state dict
-        model.load_state_dict(checkpoint["model_state_dict"])
-        model.to(self.device)
-        model.eval()
+            # Load state dict
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(self.device)
+            model.eval()
 
-        print(
-            f"Model loaded successfully (epoch {checkpoint['epoch']}, "
-            f"loss: {checkpoint['loss']:.6f})"
-        )
+            print(f"Custom model loaded successfully (epoch {checkpoint['epoch']}, "
+                  f"loss: {checkpoint['loss']:.6f})")
+        
         return model, config
 
     def predict_action(self, observation) -> np.ndarray:
@@ -84,9 +132,11 @@ class PolicyEvaluator:
         # Handle different observation formats
         if isinstance(observation, dict):
             obs_state = observation["state"]
+            obs_image = observation.get("image", None)
         else:
             # Assume observation is the state directly
             obs_state = observation
+            obs_image = None
 
         self.obs_history.append(obs_state)
 
@@ -94,16 +144,91 @@ class PolicyEvaluator:
         while len(self.obs_history) < self.config["obs_horizon"]:
             self.obs_history.append(obs_state)
 
-        # Prepare observation sequence
-        obs_seq = np.stack(list(self.obs_history))
-        obs_seq_tensor = torch.from_numpy(obs_seq).float().unsqueeze(0).to(self.device)
+        # Check if this is a LeRobot policy
+        policy_type = self.config.get("policy_type", "custom")
+        
+        if policy_type == "lerobot":
+            # LeRobot expects exactly n_obs_steps observations
+            n_obs_steps = getattr(self.model, "diffusion", None)
+            n_obs_steps = n_obs_steps.config.n_obs_steps if n_obs_steps is not None else self.config.get("obs_horizon", 2)
 
-        # Predict action sequence
-        with torch.no_grad():
-            action_seq = self.model(obs_seq_tensor)
+            history_list = list(self.obs_history)
+            if len(history_list) == 0:
+                history_list = [obs_state]
+            # Pad or trim to exactly n_obs_steps (pad with first element)
+            if len(history_list) < n_obs_steps:
+                pad_needed = n_obs_steps - len(history_list)
+                history_list = [history_list[0]] * pad_needed + history_list
+            elif len(history_list) > n_obs_steps:
+                history_list = history_list[-n_obs_steps:]
 
-        # Return first action
-        predicted_action = action_seq[0, 0].cpu().numpy()
+            obs_states = torch.stack([
+                torch.from_numpy(obs).float() for obs in history_list
+            ]).unsqueeze(0).to(self.device)  # Shape: [1, n_obs_steps, state_dim]
+
+            # Separate features to match training: dummy robot state and environment state
+            dummy_robot_state = torch.ones(1, len(self.obs_history), 1, device=self.device) * 0.5
+
+            batch = {
+                "observation.state": dummy_robot_state,
+                "observation.environment_state": obs_states,
+            }
+            
+            if obs_image is not None:
+                # Add image observations if available (convert to channel-first format)
+                image_tensor = torch.from_numpy(obs_image).float().permute(2, 0, 1).unsqueeze(0).unsqueeze(0).to(self.device)
+                batch["observation.image"] = image_tensor
+            
+            # Predict action sequence using LeRobot policy
+            with torch.no_grad():
+                # Debug shapes to ensure conditioning dims match
+                try:
+                    cfg = self.model.diffusion.config
+                    robot_dim = cfg.robot_state_feature.shape[0] if cfg.robot_state_feature is not None else 0
+                    env_dim = cfg.env_state_feature.shape[0] if cfg.env_state_feature is not None else 0
+                    n_steps = cfg.n_obs_steps
+                    step_embed = cfg.diffusion_step_embed_dim
+                    print(f"[LeRobot Eval] robot_dim={robot_dim}, env_dim={env_dim}, n_obs_steps={n_steps}")
+                    print(f"[LeRobot Eval] batch state shape: {batch['observation.state'].shape}")
+                    if 'observation.environment_state' in batch:
+                        print(f"[LeRobot Eval] batch env shape: {batch['observation.environment_state'].shape}")
+                    # Compute expected cond dim
+                    expected_global = (robot_dim + env_dim) * n_steps
+                    expected_cond = step_embed + expected_global
+                    # Compute candidate global cond from batch
+                    gc = torch.cat([batch['observation.state'], batch.get('observation.environment_state', torch.empty(1, n_steps, 0, device=self.device))], dim=-1)
+                    gc_flat = gc.flatten(start_dim=1)
+                    print(f"[LeRobot Eval] step_embed={step_embed}, expected_global={expected_global}, expected_cond={expected_cond}")
+                    print(f"[LeRobot Eval] gc_flat shape={tuple(gc_flat.shape)}, size={gc_flat.shape[-1]}")
+                    # Ask model to build the actual global_cond and print its shape
+                    true_gc = self.model.diffusion._prepare_global_conditioning(batch)
+                    print(f"[LeRobot Eval] true global_cond shape={tuple(true_gc.shape)}, size={true_gc.shape[-1]}")
+                    # And the final cond that will be used inside the first residual block
+                    t_embed = self.model.diffusion.unet.diffusion_step_encoder(torch.zeros(1, dtype=torch.long, device=self.device))
+                    final_cond = torch.cat([t_embed, true_gc], dim=-1)
+                    print(f"[LeRobot Eval] final cond shape={tuple(final_cond.shape)}, size={final_cond.shape[-1]}")
+                except Exception:
+                    pass
+                # Use select_action method for inference (not forward which is for training)
+                predicted_action_tensor = self.model.select_action(batch)
+                predicted_action = predicted_action_tensor.cpu().numpy()
+            
+            # Take first action from the sequence
+            if predicted_action.ndim > 2:
+                predicted_action = predicted_action[0, 0]  # [batch, time, action_dim] -> [action_dim]
+            elif predicted_action.ndim > 1:
+                predicted_action = predicted_action[0]  # [batch, action_dim] -> [action_dim]
+        else:
+            # Custom policy expects flattened observation sequence
+            obs_seq = np.stack(list(self.obs_history))
+            obs_seq_tensor = torch.from_numpy(obs_seq).float().unsqueeze(0).to(self.device)
+
+            # Predict action sequence
+            with torch.no_grad():
+                action_seq = self.model(obs_seq_tensor)
+
+            # Return first action
+            predicted_action = action_seq[0, 0].cpu().numpy()
 
         # Ensure action is finite and not NaN
         if not np.isfinite(predicted_action).all():
