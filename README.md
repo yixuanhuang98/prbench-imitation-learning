@@ -9,3 +9,6 @@
 3. Install this repo: `pip install -e ".[develop]"`
 4. Install the submodules:
     - `pip install -e third-party/prbench`
+    - `pip install -e third-party/prbench-bilevel-planning`
+    - `pip install -e third-party/prbench-bilevel-planning/third-party/prbench-models`
+    - `pip install -e third-party/prbench-bilevel-planning/third-party/bilevel-planning`
