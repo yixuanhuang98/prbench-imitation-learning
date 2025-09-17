@@ -64,6 +64,325 @@ except ImportError:
     EXPERT_COLLECTION_AVAILABLE = False
 
 
+def collect_geom2d_demonstrations(
+    env_name: str,
+    env_param: int,
+    num_episodes: int = 10,
+    output_dir: str = "./geom2d_demonstrations",
+    max_steps_per_episode: int = 5000,
+    save_videos: bool = False,
+    max_abstract_plans: int = 10,
+    samples_per_step: int = 3,
+    planning_timeout: float = 30.0,
+    seed: int = 123,
+) -> str:
+    """Collect expert demonstrations from any geom2d environment using BilevelPlanningAgent.
+
+    Args:
+        env_name: Environment name (e.g., 'motion2d', 'stickbutton2d', 'obstruction2d')
+        env_param: Environment parameter (passages, buttons, obstructions, blocks, etc.)
+        num_episodes: Number of episodes to collect
+        output_dir: Directory to save the dataset
+        max_steps_per_episode: Maximum steps per episode
+        save_videos: Whether to save video recordings
+        max_abstract_plans: Max abstract plans for the agent
+        samples_per_step: Samples per planning step
+        planning_timeout: Timeout for motion planning
+        seed: Random seed
+
+    Returns:
+        Path to the generated dataset
+    """
+    import pickle
+    import prbench
+    from gymnasium.wrappers import RecordVideo
+    from prbench_bilevel_planning.agent import BilevelPlanningAgent
+    from prbench_bilevel_planning.env_models import create_bilevel_planning_models
+
+    # Setup logging
+    log_dir = Path("./logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{env_name}_demonstration_collection.log"
+
+    def log_message(message: str):
+        """Log message to both console and file."""
+        print(message)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+
+    # Setup environment
+    prbench.register_all_environments()
+    
+    # Map environment names to their full IDs and parameter names
+    env_mapping = {
+        "motion2d": {
+            "env_id": f"prbench/Motion2D-p{env_param}-v0",
+            "param_name": "num_passages",
+        },
+        "stickbutton2d": {
+            "env_id": f"prbench/StickButton2D-b{env_param}-v0", 
+            "param_name": "num_buttons",
+        },
+        "obstruction2d": {
+            "env_id": f"prbench/Obstruction2D-o{env_param}-v0",
+            "param_name": "num_obstructions", 
+        },
+        "clutteredstorage2d": {
+            "env_id": f"prbench/ClutteredStorage2D-b{env_param}-v0",
+            "param_name": "num_blocks",
+        },
+        "clutteredretrieval2d": {
+            "env_id": f"prbench/ClutteredRetrieval2D-o{env_param}-v0",
+            "param_name": "num_obstructions",
+        },
+    }
+    
+    if env_name not in env_mapping:
+        raise ValueError(f"Unsupported environment: {env_name}. "
+                        f"Supported: {list(env_mapping.keys())}")
+    
+    env_info = env_mapping[env_name]
+    full_env_id = env_info["env_id"]
+    param_name = env_info["param_name"]
+
+    log_message("Starting expert demonstration collection:")
+    log_message(f"  Environment: {full_env_id}")
+    log_message(f"  Episodes: {num_episodes}")
+    log_message(f"  Max steps per episode: {max_steps_per_episode}")
+    log_message(f"  Planning timeout: {planning_timeout}s")
+
+    # Create environment
+    render_mode = "rgb_array" if save_videos else None
+    env = prbench.make(full_env_id, render_mode=render_mode)
+
+    # Setup video recording if requested
+    if save_videos:
+        videos_dir = Path(output_dir) / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        env = RecordVideo(
+            env,
+            str(videos_dir),
+            name_prefix=f"{env_name}-{env_param}-expert",
+            episode_trigger=lambda episode_id: True,  # Record every episode
+        )
+
+    # Create environment models and agent
+    try:
+        env_models = create_bilevel_planning_models(
+            env_name,
+            env.observation_space,
+            env.action_space,
+            **{param_name: env_param},
+        )
+
+        agent = BilevelPlanningAgent(
+            env_models,
+            seed=seed,
+            max_abstract_plans=max_abstract_plans,
+            samples_per_step=samples_per_step,
+            planning_timeout=planning_timeout,
+        )
+    except ImportError as e:
+        log_message(f"❌ Import error for {env_name}: {e}")
+        log_message("This environment may not have complete bilevel planning support.")
+        log_message("Available working environments: motion2d, obstruction2d")
+        raise ValueError(
+            f"Environment {env_name} is not supported due to missing dependencies. "
+            f"Working environments: motion2d, obstruction2d. "
+            f"Original error: {e}"
+        )
+
+    # Collect trajectories using the same logic as Motion2D
+    all_episodes = []
+    successful_episodes = 0
+    total_frames = 0
+    total_reward = 0.0
+    frame_idx = 0
+
+    for episode_idx in range(num_episodes):
+        log_message(f"Collecting episode {episode_idx + 1}/{num_episodes}")
+
+        try:
+            # Use the same trajectory collection logic as Motion2D
+            trajectory: list[dict] = []
+            
+            obs, info = env.reset()
+            agent.reset(obs, info)
+
+            step_count = 0
+            episode_reward = 0.0
+
+            while step_count < max_steps_per_episode:
+                try:
+                    # Get action from expert agent
+                    action = agent.step()
+
+                    # Take step in environment
+                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    done = terminated or truncated
+
+                    # Store transition
+                    transition = {
+                        "obs": obs.copy(),
+                        "action": (
+                            action.copy()
+                            if hasattr(action, "copy")
+                            else np.array(action, dtype=np.float32)
+                        ),
+                        "reward": float(reward),
+                        "next_obs": next_obs.copy(),
+                        "done": done,
+                        "info": info.copy() if hasattr(info, "copy") else dict(info),
+                        "next_info": (
+                            next_info.copy()
+                            if hasattr(next_info, "copy")
+                            else dict(next_info)
+                        ),
+                    }
+                    trajectory.append(transition)
+
+                    # Update agent
+                    agent.update(next_obs, reward, done, next_info)
+
+                    episode_reward += float(reward)
+                    step_count += 1
+
+                    if done:
+                        break
+
+                    obs = next_obs
+                    info = next_info
+
+                except Exception as e:
+                    log_message(f"  Error during trajectory collection: {e}")
+                    break
+
+            # Check success
+            success = next_info.get("success", False) if "next_info" in locals() else False
+
+            log_message(
+                f"  Generated trajectory: {len(trajectory)} steps, "
+                f"reward: {episode_reward:.2f}, success: {success}"
+            )
+
+            if trajectory:
+                # Convert to lerobot format (same logic as Motion2D)
+                episode_data = []
+                for i, transition in enumerate(trajectory):
+                    obs = transition["obs"]
+                    action = transition["action"]
+                    reward = transition["reward"]
+                    done = transition["done"]
+
+                    # Handle observation format
+                    if isinstance(obs, dict):
+                        state = obs.get(
+                            "state", obs.get("observation", np.zeros(4, dtype=np.float32))
+                        )
+                        image = obs.get("image", np.zeros((64, 64, 3), dtype=np.uint8))
+                    else:
+                        state = obs.astype(np.float32)
+                        image = np.zeros((64, 64, 3), dtype=np.uint8)
+
+                    # Ensure correct dtypes and shapes
+                    if len(state.shape) == 0:
+                        state = np.array([state], dtype=np.float32)
+                    else:
+                        state = state.astype(np.float32)
+
+                    if len(action.shape) == 0:
+                        action = np.array([action], dtype=np.float32)
+                    else:
+                        action = action.astype(np.float32)
+
+                    # Ensure image is uint8 and has correct shape
+                    if len(image.shape) == 2:
+                        image = np.stack([image] * 3, axis=-1)
+                    image = image.astype(np.uint8)
+
+                    episode_step = {
+                        "observation.state": state,
+                        "observation.image": image,
+                        "action": action,
+                        "episode_index": episode_idx,
+                        "frame_index": frame_idx + i,
+                        "timestamp": float(i),
+                        "next.reward": float(reward),
+                        "next.done": bool(done),
+                    }
+
+                    episode_data.append(episode_step)
+
+                all_episodes.extend(episode_data)
+                total_frames += len(trajectory)
+                total_reward += episode_reward
+                frame_idx += len(trajectory)
+
+                if success:
+                    successful_episodes += 1
+
+        except Exception as e:
+            log_message(f"  Failed to collect episode {episode_idx + 1}: {e}")
+            continue
+
+    env.close()
+
+    log_message("Expert demonstration collection completed:")
+    log_message(f"  Total episodes: {num_episodes}")
+    log_message(f"  Successful episodes: {successful_episodes}")
+    log_message(f"  Total frames: {total_frames}")
+    log_message(f"  Average reward: {total_reward/num_episodes:.2f}")
+    log_message(f"  Success rate: {successful_episodes/num_episodes:.2%}")
+
+    if not all_episodes:
+        raise ValueError("No valid episodes collected!")
+
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Save dataset
+    dataset_dict = {
+        "episodes": all_episodes,
+        "metadata": {
+            "env_name": full_env_id,
+            "env_type": env_name,
+            "env_param": env_param,
+            "dataset_name": f"{env_name}_{env_param}_expert",
+            "num_episodes": num_episodes,
+            "total_frames": total_frames,
+            "successful_episodes": successful_episodes,
+            "success_rate": successful_episodes / num_episodes,
+            "average_reward": total_reward / num_episodes,
+            "data_type": "expert",
+            "agent_type": "BilevelPlanningAgent",
+            "agent_config": {
+                "max_abstract_plans": max_abstract_plans,
+                "samples_per_step": samples_per_step,
+                "planning_timeout": planning_timeout,
+                "seed": seed,
+            },
+            "generated_at": time.time(),
+        },
+    }
+
+    # Save as pickle format for compatibility with DiffusionPolicyDataset
+    pickle_path = output_path / "dataset.pkl"
+    with open(pickle_path, "wb") as f:
+        pickle.dump(dataset_dict, f)
+
+    log_message(f"Dataset saved to: {pickle_path}")
+
+    # Save metadata as JSON for easy inspection
+    metadata_path = output_path / "metadata.json"
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(dataset_dict["metadata"], f, indent=2)
+
+    log_message(f"Metadata saved to: {metadata_path}")
+
+    return str(output_path)
+
+
 def load_precomputed_demonstrations(
     demos_dir: str,
     output_dir: str,
@@ -196,6 +515,66 @@ def load_precomputed_demonstrations(
     return str(output_path)
 
 
+def _parse_environment_name(env_name: str) -> tuple[str, int]:
+    """Parse environment name to extract type and parameter.
+    
+    Args:
+        env_name: Environment name like 'motion2d-p1', 'stickbutton2d-b3', etc.
+        
+    Returns:
+        Tuple of (environment_type, parameter_value)
+    """
+    # Handle different naming patterns
+    if env_name.startswith("motion2d"):
+        # motion2d-p1, motion2d-p2, etc.
+        parts = env_name.split("-")
+        if len(parts) >= 2 and parts[1].startswith("p"):
+            param = int(parts[1][1:])  # Remove 'p' prefix
+        else:
+            param = 2  # Default
+        return "motion2d", param
+        
+    elif env_name.startswith("stickbutton2d"):
+        # stickbutton2d-b1, stickbutton2d-b5, etc.
+        parts = env_name.split("-")
+        if len(parts) >= 2 and parts[1].startswith("b"):
+            param = int(parts[1][1:])  # Remove 'b' prefix
+        else:
+            param = 1  # Default
+        return "stickbutton2d", param
+        
+    elif env_name.startswith("obstruction2d"):
+        # obstruction2d-o0, obstruction2d-o1, etc.
+        parts = env_name.split("-")
+        if len(parts) >= 2 and parts[1].startswith("o"):
+            param = int(parts[1][1:])  # Remove 'o' prefix
+        else:
+            param = 1  # Default
+        return "obstruction2d", param
+        
+    elif env_name.startswith("clutteredstorage2d"):
+        # clutteredstorage2d-b1, clutteredstorage2d-b7, etc.
+        parts = env_name.split("-")
+        if len(parts) >= 2 and parts[1].startswith("b"):
+            param = int(parts[1][1:])  # Remove 'b' prefix
+        else:
+            param = 1  # Default
+        return "clutteredstorage2d", param
+        
+    elif env_name.startswith("clutteredretrieval2d"):
+        # clutteredretrieval2d-o1, clutteredretrieval2d-o3, etc.
+        parts = env_name.split("-")
+        if len(parts) >= 2 and parts[1].startswith("o"):
+            param = int(parts[1][1:])  # Remove 'o' prefix
+        else:
+            param = 1  # Default
+        return "clutteredretrieval2d", param
+        
+    else:
+        # Fallback: assume motion2d
+        return "motion2d", 2
+
+
 def main():
     """Main function to run the complete diffusion policy pipeline."""
     # Get available environments dynamically
@@ -250,6 +629,11 @@ def main():
         default=2,
         choices=[1, 2, 3],
         help="Number of passages for Motion2D environment (only for expert data)",
+    )
+    parser.add_argument(
+        "--env-param",
+        type=int,
+        help="Generic environment parameter (passages, buttons, obstructions, blocks, etc.) - auto-detects based on environment name",
     )
     parser.add_argument(
         "--max-abstract-plans",
@@ -447,7 +831,7 @@ def main():
             dataset_name = f"{args.env}_{args.data_type}_{args.data_episodes}ep"
 
             if args.data_type == "expert":
-                # Use expert demonstration collection for Motion2D
+                # Use expert demonstration collection for geom2d environments
                 if not EXPERT_COLLECTION_AVAILABLE:
                     raise ImportError(
                         "Expert demonstration collection not available. "
@@ -455,26 +839,46 @@ def main():
                         "directory and bilevel planning third-party module is available."
                     )
 
-                if not args.env.startswith("motion2d"):
-                    raise ValueError(
-                        "Expert demonstrations are currently only supported for "
-                        f"Motion2D environments. Got environment: {args.env}"
-                    )
+                # Extract environment type and parameter
+                env_type, env_param = _parse_environment_name(args.env)
+                
+                # Use env_param argument if provided, otherwise use parsed or default values
+                if args.env_param is not None:
+                    env_param = args.env_param
+                elif env_type == "motion2d":
+                    env_param = args.num_passages  # Backward compatibility
 
                 log_message("Using BilevelPlanningAgent for expert demonstrations")
                 log_message("Using bilevel planning from third-party submodule")
+                log_message(f"Environment type: {env_type}, parameter: {env_param}")
 
-                dataset_path = collect_motion2d_demonstrations(
-                    num_passages=args.num_passages,
-                    num_episodes=args.data_episodes,
-                    output_dir=str(dataset_dir / dataset_name),
-                    max_steps_per_episode=1000,  # Reasonable default
-                    save_videos=args.save_demo_videos,
-                    max_abstract_plans=args.max_abstract_plans,
-                    samples_per_step=args.samples_per_step,
-                    planning_timeout=args.planning_timeout,
-                    seed=123,  # Fixed seed for reproducibility
-                )
+                # Use specialized Motion2D collector if available, otherwise use generic
+                if env_type == "motion2d" and EXPERT_COLLECTION_AVAILABLE:
+                    dataset_path = collect_motion2d_demonstrations(
+                        num_passages=env_param,
+                        num_episodes=args.data_episodes,
+                        output_dir=str(dataset_dir / dataset_name),
+                        max_steps_per_episode=1000,  # Reasonable default
+                        save_videos=args.save_demo_videos,
+                        max_abstract_plans=args.max_abstract_plans,
+                        samples_per_step=args.samples_per_step,
+                        planning_timeout=args.planning_timeout,
+                        seed=123,  # Fixed seed for reproducibility
+                    )
+                else:
+                    # Use generic geom2d collector
+                    dataset_path = collect_geom2d_demonstrations(
+                        env_name=env_type,
+                        env_param=env_param,
+                        num_episodes=args.data_episodes,
+                        output_dir=str(dataset_dir / dataset_name),
+                        max_steps_per_episode=1000,  # Reasonable default
+                        save_videos=args.save_demo_videos,
+                        max_abstract_plans=args.max_abstract_plans,
+                        samples_per_step=args.samples_per_step,
+                        planning_timeout=args.planning_timeout,
+                        seed=123,  # Fixed seed for reproducibility
+                    )
             elif args.data_type == "precomputed":
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
