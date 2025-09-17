@@ -47,9 +47,9 @@ if third_party_prbench_bilevel.exists():
 if third_party_prbench_models.exists():
     sys.path.insert(0, str(third_party_prbench_models))
 
-# pylint: disable=wrong-import-position
-from prbench_bilevel_planning.agent import BilevelPlanningAgent
-from prbench_bilevel_planning.env_models import create_bilevel_planning_models
+# pylint: disable=wrong-import-position,import-error
+from prbench_bilevel_planning.agent import BilevelPlanningAgent  # pylint: disable=import-error
+from prbench_bilevel_planning.env_models import create_bilevel_planning_models  # pylint: disable=import-error
 
 
 def setup_environment():
