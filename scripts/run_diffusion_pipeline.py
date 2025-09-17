@@ -4,10 +4,13 @@ policies on geom2d environments."""
 
 import argparse
 import json
+import pickle
 import sys
 import time
 import traceback
 from pathlib import Path
+
+import numpy as np
 
 # Add src to path to import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -62,80 +65,81 @@ except ImportError:
 
 
 def load_precomputed_demonstrations(
-    demos_dir: str, 
+    demos_dir: str,
     output_dir: str,
     dataset_name: str,
 ) -> str:
     """Load precomputed demonstrations and convert them to lerobot format.
-    
+
     Args:
         demos_dir: Directory containing precomputed demonstration files (.p files)
         output_dir: Output directory for the converted dataset
         dataset_name: Name for the dataset
-        
+
     Returns:
         Path to the converted dataset directory
     """
-    import pickle
-    import numpy as np
-    
+
     demos_path = Path(demos_dir)
     if not demos_path.exists():
         raise ValueError(f"Precomputed demonstrations directory not found: {demos_dir}")
-    
+
     print(f"Loading precomputed demonstrations from: {demos_dir}")
-    
+
     # Find all .p files in subdirectories
     demo_files = []
     for subdir in demos_path.iterdir():
         if subdir.is_dir():
             for file_path in subdir.glob("*.p"):
                 demo_files.append(file_path)
-    
+
     if not demo_files:
         raise ValueError(f"No demonstration files found in: {demos_dir}")
-    
+
     print(f"Found {len(demo_files)} demonstration files")
-    
+
     # Convert demonstrations to lerobot format
     all_episodes = []
     frame_idx = 0
-    
+
     for episode_idx, demo_file in enumerate(demo_files):
-        print(f"Processing demonstration {episode_idx + 1}/{len(demo_files)}: {demo_file.name}")
-        
+        print(
+            f"Processing demonstration"
+            f"{episode_idx + 1}/{len(demo_files)}: {demo_file.name}"
+        )
+
         try:
-            with open(demo_file, 'rb') as f:
+            with open(demo_file, "rb") as f:
                 demo_data = pickle.load(f)
-            
+
             # Extract trajectory data
-            observations = demo_data['observations']
-            actions = demo_data['actions']
-            rewards = demo_data['rewards']
-            
+            observations = demo_data["observations"]
+            actions = demo_data["actions"]
+            rewards = demo_data["rewards"]
+
             # Convert to lerobot format
             episode_data = []
             for i in range(len(actions)):  # actions is one shorter than observations
                 obs = observations[i]
                 action = actions[i]
                 reward = rewards[i]
-                done = (i == len(actions) - 1)  # Last step is done
-                
+                done = i == len(actions) - 1  # Last step is done
+
                 # Handle observation format - Motion2D uses numpy arrays directly
                 if isinstance(obs, np.ndarray):
                     state = obs.astype(np.float32)
                 else:
                     state = np.array(obs, dtype=np.float32)
-                
+
                 # Handle action format
                 if isinstance(action, np.ndarray):
                     action = action.astype(np.float32)
                 else:
                     action = np.array(action, dtype=np.float32)
-                
+
                 # Create dummy image since Motion2D doesn't have visual observations
                 image = np.zeros((64, 64, 3), dtype=np.uint8)
-                
+
                 episode_step = {
                     "observation.state": state,
                     "observation.image": image,
@@ -146,25 +150,25 @@ def load_precomputed_demonstrations(
                     "next.reward": float(reward),
                     "next.done": bool(done),
                 }
-                
+
                 episode_data.append(episode_step)
-            
+
             all_episodes.extend(episode_data)
             frame_idx += len(episode_data)
-            
+
         except Exception as e:
             print(f"Error processing {demo_file}: {e}")
             continue
-    
+
     if not all_episodes:
         raise ValueError("No valid episodes found in demonstration files!")
-    
+
     print(f"Converted {len(demo_files)} episodes with {len(all_episodes)} total frames")
-    
+
     # Create output directory
     output_path = Path(output_dir) / dataset_name
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Create dataset dictionary
     dataset_dict = {
         "episodes": all_episodes,
@@ -177,17 +181,17 @@ def load_precomputed_demonstrations(
             "generated_at": time.time(),
         },
     }
-    
+
     # Save as pickle format for compatibility with DiffusionPolicyDataset
     pickle_path = output_path / "dataset.pkl"
     with open(pickle_path, "wb") as f:
         pickle.dump(dataset_dict, f)
-    
+
     # Save metadata as JSON for easy inspection
     metadata_path = output_path / "metadata.json"
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(dataset_dict["metadata"], f, indent=2)
-    
+
     print(f"Dataset saved to: {output_path}")
     return str(output_path)
 
@@ -231,7 +235,7 @@ def main():
         type=str,
         default="random",
         choices=["random", "expert", "precomputed"],
-        help="Type of data to collect (random or expert demonstrations, or use precomputed demos)",
+        help="Type of data to collect",
     )
     parser.add_argument(
         "--save-demo-videos",
@@ -326,7 +330,7 @@ def main():
     parser.add_argument(
         "--precomputed-demos-dir",
         type=str,
-        help="Path to directory containing precomputed demonstrations (for data-type=precomputed)",
+        help="Directory containing demonstrations (for data-type=precomputed)",
     )
     parser.add_argument(
         "--model-path", type=str, help="Path to existing model (if skipping training)"
@@ -475,12 +479,15 @@ def main():
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
                     raise ValueError(
-                        "Must provide --precomputed-demos-dir when using data-type=precomputed"
+                        "Must provide --precomputed-demos-dir when data-type=precomputed"
                     )
-                
-                log_message(f"Loading precomputed demonstrations from: {args.precomputed_demos_dir}")
+
+                log_message(
+                    f"Loading precomputed demonstrations"
+                    f"from: {args.precomputed_demos_dir}"
+                )
                 dataset_name = f"{args.env}_precomputed"
-                
+
                 dataset_path = load_precomputed_demonstrations(
                     demos_dir=args.precomputed_demos_dir,
                     output_dir=str(dataset_dir),
