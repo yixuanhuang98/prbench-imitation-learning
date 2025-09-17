@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 import wandb
@@ -15,13 +16,15 @@ from .policy import DiffusionPolicy, DiffusionPolicyDataset
 
 # LeRobot imports
 try:
-    from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as LeRobotDiffusionPolicy
+    from lerobot.configs.policies import FeatureType, PolicyFeature
     from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    from lerobot.optim.factory import make_optimizer_and_scheduler
-    from lerobot.utils.logging_utils import MetricsTracker
-    from lerobot.configs.policies import PolicyFeature, FeatureType
+    from lerobot.policies.diffusion.modeling_diffusion import (
+        DiffusionPolicy as LeRobotDiffusionPolicy,)
+
+    # Import GradScaler inside try block since it's only used with LeRobot
+    # pylint: disable=ungrouped-imports
     from torch.amp import GradScaler
+
     LEROBOT_AVAILABLE = True
 except ImportError:
     LEROBOT_AVAILABLE = False
@@ -244,12 +247,12 @@ def train_lerobot_diffusion_policy(
         pred_horizon=config.get("pred_horizon", 8),
     )
     print(f"Dataset loaded with {len(dataset)} sequences")
-    
+
     # Get dimensions from our dataset
     obs_state_shape = (dataset.obs_dim,)
     action_shape = (dataset.action_dim,)
     image_shape = dataset.image_shape
-        
+
     print(f"Observation state shape: {obs_state_shape}")
     print(f"Action shape: {action_shape}")
     if image_shape is not None:
@@ -259,18 +262,21 @@ def train_lerobot_diffusion_policy(
     # Use separate robot state (1) and environment state (obs_dim)
     input_features = {
         "observation.state": PolicyFeature(shape=[1], type=FeatureType.STATE),
-        "observation.environment_state": PolicyFeature(shape=list(obs_state_shape), type=FeatureType.ENV),
+        "observation.environment_state": PolicyFeature(
+            shape=list(obs_state_shape), type=FeatureType.ENV
+        ),
     }
-    # TODO: Add image support later
     # if image_shape is not None:
     #     # Convert from (H, W, C) to (C, H, W) format for LeRobot
-    #     lerobot_image_shape = [image_shape[2], image_shape[0], image_shape[1]]  # (C, H, W)
-    #     input_features["observation.image"] = PolicyFeature(shape=lerobot_image_shape, type=FeatureType.VISUAL)
-    
+    #     lerobot_image_shape = [image_shape[2], image_shape[0],
+    #                           image_shape[1]]  # (C, H, W)
+    #     input_features["observation.image"] = PolicyFeature(
+    #         shape=lerobot_image_shape, type=FeatureType.VISUAL)
+
     output_features = {
         "action": PolicyFeature(shape=list(action_shape), type=FeatureType.ACTION),
     }
-    
+
     # Create config and set required features
     diffusion_config = DiffusionConfig()
     diffusion_config.input_features = input_features
@@ -281,17 +287,18 @@ def train_lerobot_diffusion_policy(
     diffusion_config.num_train_timesteps = config.get("num_diffusion_iters", 100)
     diffusion_config.optimizer_lr = config.get("learning_rate", 1e-4)
     # Align conditioning dim used in LeRobot residual FiLM blocks with eval path
-    # Set timestep embedding so that cond_dim = timestep_embed(=248) + global_cond(=120) = 368
+    # Set timestep embedding so that
+    # cond_dim = timestep_embed(=248) + global_cond(=120) = 368
     diffusion_config.diffusion_step_embed_dim = 248
-    
+
     # Disable cropping since we're not using images for now
     diffusion_config.crop_shape = None
-    
+
     # Compute dataset statistics for normalization
     print("Computing dataset statistics for normalization...")
-    import numpy as np
+
     stats = {}
-    
+
     # Compute state statistics
     all_states = []
     all_actions = []
@@ -299,21 +306,21 @@ def train_lerobot_diffusion_policy(
         sample = dataset[i]
         all_states.extend(sample["obs_states"].flatten().tolist())
         all_actions.extend(sample["actions"].flatten().tolist())
-    
+
     state_stats = {
         "min": np.min(all_states),
-        "max": np.max(all_states), 
+        "max": np.max(all_states),
         "mean": np.mean(all_states),
-        "std": max(np.std(all_states), 1e-8)  # Avoid zero std
+        "std": max(np.std(all_states), 1e-8),  # Avoid zero std
     }
-    
+
     action_stats = {
         "min": np.min(all_actions),
         "max": np.max(all_actions),
-        "mean": np.mean(all_actions), 
-        "std": max(np.std(all_actions), 1e-8)  # Avoid zero std
+        "mean": np.mean(all_actions),
+        "std": max(np.std(all_actions), 1e-8),  # Avoid zero std
     }
-    
+
     # Format stats for LeRobot
     stats = {
         "observation.state": {
@@ -333,12 +340,11 @@ def train_lerobot_diffusion_policy(
             "max": torch.tensor([action_stats["max"]] * action_shape[0]).float(),
             "mean": torch.tensor([action_stats["mean"]] * action_shape[0]).float(),
             "std": torch.tensor([action_stats["std"]] * action_shape[0]).float(),
-        }
+        },
     }
-    
+
     # Skip image stats for now since we're only using state observations
-    # TODO: Add image support later
-    
+
     print("Dataset statistics computed.")
 
     # Create model with stats
@@ -353,7 +359,7 @@ def train_lerobot_diffusion_policy(
         eps=diffusion_config.optimizer_eps,
         weight_decay=diffusion_config.optimizer_weight_decay,
     )
-    
+
     # Create scheduler
     total_steps = config["num_epochs"] * (len(dataset) // config["batch_size"])
     lr_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps)
@@ -405,31 +411,38 @@ def train_lerobot_diffusion_policy(
             obs_states = batch["obs_states"].to(device)
             actions = batch["actions"].to(device)
             batch_size, action_horizon = actions.shape[:2]
-            
+
             # Separate features: dummy robot state and environment state
-            dummy_robot_state = torch.ones(batch_size, config.get("obs_horizon", 2), 1, device=device) * 0.5
+            dummy_robot_state = (
+                torch.ones(batch_size, config.get("obs_horizon", 2), 1, device=device)
+                * 0.5
+            )
 
             lerobot_batch = {
                 "observation.state": dummy_robot_state,  # Shape: [batch, obs_horizon, 1]
-                "observation.environment_state": obs_states,  # [batch, obs_horizon, state_dim]
+                # [batch, obs_horizon, state_dim]
+                "observation.environment_state": obs_states,
                 "action": actions,  # Shape: [batch, action_horizon, action_dim]
-                "action_is_pad": torch.zeros(batch_size, action_horizon, dtype=torch.bool, device=device),  # No padding
+                "action_is_pad": torch.zeros(
+                    batch_size, action_horizon, dtype=torch.bool, device=device
+                ),  # No padding
             }
-            
+
             # Skip images for now - only using state observations
-            # TODO: Add image support later
 
             # Forward pass through LeRobot policy
-            loss, output_dict = model.forward(lerobot_batch)
+            loss, _ = model.forward(lerobot_batch)
 
             # Backward pass
             optimizer.zero_grad()
             grad_scaler.scale(loss).backward()
-            
+
             # Gradient clipping
             grad_scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.get("grad_clip_norm", 1.0))
-            
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), config.get("grad_clip_norm", 1.0)
+            )
+
             grad_scaler.step(optimizer)
             grad_scaler.update()
 
@@ -463,7 +476,11 @@ def train_lerobot_diffusion_policy(
             wandb.log(
                 {
                     "epoch_loss": avg_loss,
-                    "learning_rate": lr_scheduler.get_last_lr()[0] if lr_scheduler else config.get("learning_rate", 1e-4),
+                    "learning_rate": (
+                        lr_scheduler.get_last_lr()[0]
+                        if lr_scheduler
+                        else config.get("learning_rate", 1e-4)
+                    ),
                     "epoch": epoch,
                 }
             )

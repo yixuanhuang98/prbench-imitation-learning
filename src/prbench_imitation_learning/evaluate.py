@@ -17,8 +17,9 @@ from .policy import DiffusionPolicy
 
 # LeRobot imports
 try:
-    from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as LeRobotDiffusionPolicy
-    from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+    from lerobot.policies.diffusion.modeling_diffusion import (
+        DiffusionPolicy as LeRobotDiffusionPolicy,)
+
     LEROBOT_AVAILABLE = True
 except ImportError:
     LEROBOT_AVAILABLE = False
@@ -58,47 +59,60 @@ class PolicyEvaluator:
 
         # Use weights_only=False for LeRobot models to handle custom classes
         try:
-            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
+            checkpoint = torch.load(
+                self.model_path, map_location=self.device, weights_only=True
+            )
         except Exception:
             # If weights_only=True fails, try with weights_only=False for LeRobot models
-            checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+            checkpoint = torch.load(
+                self.model_path, map_location=self.device, weights_only=False
+            )
         config = checkpoint["config"]
-        
+
         # Check if this is a LeRobot policy
         policy_type = config.get("policy_type", "custom")
-        
+
         if policy_type == "lerobot":
             if not LEROBOT_AVAILABLE:
                 raise ImportError(
-                    "LeRobot is not available but model was trained with LeRobot policy. "
-                    "Please install it with: pip install lerobot"
+                    "LeRobot is not available but model was trained with "
+                    "LeRobot policy. Please install it with: pip install lerobot"
                 )
-            
+
             # Load LeRobot diffusion config
             diffusion_config = checkpoint["diffusion_config"]
-            
+
             # Create LeRobot model
             model = LeRobotDiffusionPolicy(diffusion_config)
-            
+
             # Load state dict
             model.load_state_dict(checkpoint["model_state_dict"])
             model.to(self.device)
             model.eval()
 
-            # Workaround: in some LeRobot versions, the FiLM cond encoder receives a longer vector.
-            # Trim linear inputs to expected in_features to avoid matmul shape errors at inference.
-            import torch.nn as nn
+            # Workaround: in some LeRobot versions, the FiLM cond encoder
+            # receives a longer vector.
+            # Trim linear inputs to expected in_features to avoid matmul
+            # shape errors at inference.
+
             def _trim_input_pre_hook(module, inputs):
                 x = inputs[0]
-                if hasattr(module, 'in_features') and x.shape[-1] != module.in_features:
+                if hasattr(module, "in_features") and x.shape[-1] != module.in_features:
                     return (x[..., : module.in_features],)
                 return inputs
+
+            # pylint: disable=import-outside-toplevel
+            from torch import nn
+
             for m in model.modules():
                 if isinstance(m, nn.Linear):
                     m.register_forward_pre_hook(_trim_input_pre_hook)
-            
-            print(f"LeRobot model loaded successfully (epoch {checkpoint['epoch']}, "
-                  f"loss: {checkpoint['loss']:.6f})")
+
+            print(
+                f"LeRobot model loaded successfully "
+                f"(epoch {checkpoint['epoch']}, "
+                f"loss: {checkpoint['loss']:.6f})"
+            )
         else:
             # Create custom model
             model = DiffusionPolicy(
@@ -114,9 +128,12 @@ class PolicyEvaluator:
             model.to(self.device)
             model.eval()
 
-            print(f"Custom model loaded successfully (epoch {checkpoint['epoch']}, "
-                  f"loss: {checkpoint['loss']:.6f})")
-        
+            print(
+                f"Custom model loaded successfully "
+                f"(epoch {checkpoint['epoch']}, "
+                f"loss: {checkpoint['loss']:.6f})"
+            )
+
         return model, config
 
     def predict_action(self, observation) -> np.ndarray:
@@ -146,11 +163,15 @@ class PolicyEvaluator:
 
         # Check if this is a LeRobot policy
         policy_type = self.config.get("policy_type", "custom")
-        
+
         if policy_type == "lerobot":
             # LeRobot expects exactly n_obs_steps observations
             n_obs_steps = getattr(self.model, "diffusion", None)
-            n_obs_steps = n_obs_steps.config.n_obs_steps if n_obs_steps is not None else self.config.get("obs_horizon", 2)
+            n_obs_steps = (
+                n_obs_steps.config.n_obs_steps
+                if n_obs_steps is not None
+                else self.config.get("obs_horizon", 2)
+            )
 
             history_list = list(self.obs_history)
             if len(history_list) == 0:
@@ -162,66 +183,131 @@ class PolicyEvaluator:
             elif len(history_list) > n_obs_steps:
                 history_list = history_list[-n_obs_steps:]
 
-            obs_states = torch.stack([
-                torch.from_numpy(obs).float() for obs in history_list
-            ]).unsqueeze(0).to(self.device)  # Shape: [1, n_obs_steps, state_dim]
+            obs_states = (
+                torch.stack([torch.from_numpy(obs).float() for obs in history_list])
+                .unsqueeze(0)
+                .to(self.device)
+            )  # Shape: [1, n_obs_steps, state_dim]
 
-            # Separate features to match training: dummy robot state and environment state
-            dummy_robot_state = torch.ones(1, len(self.obs_history), 1, device=self.device) * 0.5
+            # Separate features to match training: dummy robot state and
+            # environment state
+            dummy_robot_state = (
+                torch.ones(1, len(self.obs_history), 1, device=self.device) * 0.5
+            )
 
             batch = {
                 "observation.state": dummy_robot_state,
                 "observation.environment_state": obs_states,
             }
-            
+
             if obs_image is not None:
-                # Add image observations if available (convert to channel-first format)
-                image_tensor = torch.from_numpy(obs_image).float().permute(2, 0, 1).unsqueeze(0).unsqueeze(0).to(self.device)
+                # Add image observations if available
+                # (convert to channel-first format)
+                image_tensor = (
+                    torch.from_numpy(obs_image)
+                    .float()
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
+                    .unsqueeze(0)
+                    .to(self.device)
+                )
                 batch["observation.image"] = image_tensor
-            
+
             # Predict action sequence using LeRobot policy
             with torch.no_grad():
                 # Debug shapes to ensure conditioning dims match
                 try:
-                    cfg = self.model.diffusion.config
-                    robot_dim = cfg.robot_state_feature.shape[0] if cfg.robot_state_feature is not None else 0
-                    env_dim = cfg.env_state_feature.shape[0] if cfg.env_state_feature is not None else 0
-                    n_steps = cfg.n_obs_steps
-                    step_embed = cfg.diffusion_step_embed_dim
-                    print(f"[LeRobot Eval] robot_dim={robot_dim}, env_dim={env_dim}, n_obs_steps={n_steps}")
-                    print(f"[LeRobot Eval] batch state shape: {batch['observation.state'].shape}")
-                    if 'observation.environment_state' in batch:
-                        print(f"[LeRobot Eval] batch env shape: {batch['observation.environment_state'].shape}")
+                    cfg = self.model.diffusion.config  # type: ignore
+                    robot_dim = (
+                        cfg.robot_state_feature.shape[0]  # type: ignore
+                        if cfg.robot_state_feature is not None  # type: ignore
+                        else 0
+                    )
+                    env_dim = (
+                        cfg.env_state_feature.shape[0]  # type: ignore
+                        if cfg.env_state_feature is not None  # type: ignore
+                        else 0
+                    )
+                    n_steps = cfg.n_obs_steps  # type: ignore
+                    step_embed = cfg.diffusion_step_embed_dim  # type: ignore
+                    print(
+                        f"[LeRobot Eval] robot_dim={robot_dim}, "
+                        f"env_dim={env_dim}, n_obs_steps={n_steps}"
+                    )
+                    print(
+                        f"[LeRobot Eval] batch state shape: "
+                        f"{batch['observation.state'].shape}"
+                    )
+                    if "observation.environment_state" in batch:
+                        print(
+                            f"[LeRobot Eval] batch env shape: "
+                            f"{batch['observation.environment_state'].shape}"
+                        )
                     # Compute expected cond dim
                     expected_global = (robot_dim + env_dim) * n_steps
                     expected_cond = step_embed + expected_global
                     # Compute candidate global cond from batch
-                    gc = torch.cat([batch['observation.state'], batch.get('observation.environment_state', torch.empty(1, n_steps, 0, device=self.device))], dim=-1)
+                    gc = torch.cat(
+                        [
+                            batch["observation.state"],
+                            batch.get(
+                                "observation.environment_state",
+                                torch.empty(1, n_steps, 0, device=self.device),
+                            ),
+                        ],
+                        dim=-1,
+                    )
                     gc_flat = gc.flatten(start_dim=1)
-                    print(f"[LeRobot Eval] step_embed={step_embed}, expected_global={expected_global}, expected_cond={expected_cond}")
-                    print(f"[LeRobot Eval] gc_flat shape={tuple(gc_flat.shape)}, size={gc_flat.shape[-1]}")
-                    # Ask model to build the actual global_cond and print its shape
-                    true_gc = self.model.diffusion._prepare_global_conditioning(batch)
-                    print(f"[LeRobot Eval] true global_cond shape={tuple(true_gc.shape)}, size={true_gc.shape[-1]}")
-                    # And the final cond that will be used inside the first residual block
-                    t_embed = self.model.diffusion.unet.diffusion_step_encoder(torch.zeros(1, dtype=torch.long, device=self.device))
+                    print(
+                        f"[LeRobot Eval] step_embed={step_embed}, "
+                        f"expected_global={expected_global}, "
+                        f"expected_cond={expected_cond}"
+                    )
+                    print(
+                        f"[LeRobot Eval] gc_flat shape={tuple(gc_flat.shape)}, "
+                        f"size={gc_flat.shape[-1]}"
+                    )
+                    # Ask model to build the actual global_cond and print shape
+                    # pylint: disable=protected-access
+                    true_gc = self.model.diffusion._prepare_global_conditioning(batch)  # type: ignore # pylint: disable=line-too-long
+                    print(
+                        f"[LeRobot Eval] true global_cond "
+                        f"shape={tuple(true_gc.shape)}, "
+                        f"size={true_gc.shape[-1]}"
+                    )
+                    # And the final cond that will be used inside the first
+                    # residual block
+                    t_embed = self.model.diffusion.unet.diffusion_step_encoder(  # type: ignore # pylint: disable=line-too-long
+                        torch.zeros(1, dtype=torch.long, device=self.device)
+                    )
                     final_cond = torch.cat([t_embed, true_gc], dim=-1)
-                    print(f"[LeRobot Eval] final cond shape={tuple(final_cond.shape)}, size={final_cond.shape[-1]}")
+                    print(
+                        f"[LeRobot Eval] final cond "
+                        f"shape={tuple(final_cond.shape)}, "
+                        f"size={final_cond.shape[-1]}"
+                    )
                 except Exception:
                     pass
-                # Use select_action method for inference (not forward which is for training)
+                # Use select_action method for inference
+                # (not forward which is for training)
                 predicted_action_tensor = self.model.select_action(batch)
                 predicted_action = predicted_action_tensor.cpu().numpy()
-            
+
             # Take first action from the sequence
             if predicted_action.ndim > 2:
-                predicted_action = predicted_action[0, 0]  # [batch, time, action_dim] -> [action_dim]
+                predicted_action = predicted_action[
+                    0, 0
+                ]  # [batch, time, action_dim] -> [action_dim]
             elif predicted_action.ndim > 1:
-                predicted_action = predicted_action[0]  # [batch, action_dim] -> [action_dim]
+                predicted_action = predicted_action[
+                    0
+                ]  # [batch, action_dim] -> [action_dim]
         else:
             # Custom policy expects flattened observation sequence
             obs_seq = np.stack(list(self.obs_history))
-            obs_seq_tensor = torch.from_numpy(obs_seq).float().unsqueeze(0).to(self.device)
+            obs_seq_tensor = (
+                torch.from_numpy(obs_seq).float().unsqueeze(0).to(self.device)
+            )
 
             # Predict action sequence
             with torch.no_grad():
@@ -247,7 +333,7 @@ class PolicyEvaluator:
         self,
         env_id: str,
         num_episodes: int = 10,
-        render: bool = False,
+        render: bool = False,  # pylint: disable=unused-argument
         save_videos: bool = False,
         save_plots: bool = True,
         output_dir: str = None,
