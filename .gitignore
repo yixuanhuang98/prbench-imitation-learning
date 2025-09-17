@@ -166,3 +166,10 @@ local_README/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+.venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+diffusion_pipeline_results/
+logs/
