@@ -21,6 +21,7 @@ try:
     from lerobot.policies.diffusion.modeling_diffusion import (
         DiffusionPolicy as LeRobotDiffusionPolicy,
     )
+
     # isort: on
 
     LEROBOT_AVAILABLE = True

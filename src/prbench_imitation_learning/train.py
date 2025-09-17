@@ -18,10 +18,12 @@ from .policy import DiffusionPolicy, DiffusionPolicyDataset
 try:
     from lerobot.configs.policies import FeatureType, PolicyFeature
     from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+
     # isort: off
     from lerobot.policies.diffusion.modeling_diffusion import (
         DiffusionPolicy as LeRobotDiffusionPolicy,
     )
+
     # isort: on
 
     # Import GradScaler inside try block since it's only used with LeRobot
