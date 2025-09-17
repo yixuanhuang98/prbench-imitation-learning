@@ -17,8 +17,11 @@ from .policy import DiffusionPolicy
 
 # LeRobot imports
 try:
+    # isort: off
     from lerobot.policies.diffusion.modeling_diffusion import (
-        DiffusionPolicy as LeRobotDiffusionPolicy,)
+        DiffusionPolicy as LeRobotDiffusionPolicy,
+    )
+    # isort: on
 
     LEROBOT_AVAILABLE = True
 except ImportError:
