@@ -76,7 +76,8 @@ def collect_geom2d_demonstrations(
     planning_timeout: float = 30.0,
     seed: int = 123,
 ) -> str:
-    """Collect expert demonstrations from any geom2d environment using BilevelPlanningAgent.
+    """Collect expert demonstrations from any geom2d environment using
+    BilevelPlanningAgent.
 
     Args:
         env_name: Environment name (e.g., 'motion2d', 'stickbutton2d', 'obstruction2d')
@@ -93,7 +94,8 @@ def collect_geom2d_demonstrations(
     Returns:
         Path to the generated dataset
     """
-    import pickle
+    # Import required modules (inside function to handle optional dependencies)
+    # pylint: disable=import-outside-toplevel
     import prbench
     from gymnasium.wrappers import RecordVideo
     from prbench_bilevel_planning.agent import BilevelPlanningAgent
@@ -112,7 +114,7 @@ def collect_geom2d_demonstrations(
 
     # Setup environment
     prbench.register_all_environments()
-    
+
     # Map environment names to their full IDs and parameter names
     env_mapping = {
         "motion2d": {
@@ -120,12 +122,12 @@ def collect_geom2d_demonstrations(
             "param_name": "num_passages",
         },
         "stickbutton2d": {
-            "env_id": f"prbench/StickButton2D-b{env_param}-v0", 
+            "env_id": f"prbench/StickButton2D-b{env_param}-v0",
             "param_name": "num_buttons",
         },
         "obstruction2d": {
             "env_id": f"prbench/Obstruction2D-o{env_param}-v0",
-            "param_name": "num_obstructions", 
+            "param_name": "num_obstructions",
         },
         "clutteredstorage2d": {
             "env_id": f"prbench/ClutteredStorage2D-b{env_param}-v0",
@@ -136,11 +138,13 @@ def collect_geom2d_demonstrations(
             "param_name": "num_obstructions",
         },
     }
-    
+
     if env_name not in env_mapping:
-        raise ValueError(f"Unsupported environment: {env_name}. "
-                        f"Supported: {list(env_mapping.keys())}")
-    
+        raise ValueError(
+            f"Unsupported environment: {env_name}. "
+            f"Supported: {list(env_mapping.keys())}"
+        )
+
     env_info = env_mapping[env_name]
     full_env_id = env_info["env_id"]
     param_name = env_info["param_name"]
@@ -205,7 +209,7 @@ def collect_geom2d_demonstrations(
         try:
             # Use the same trajectory collection logic as Motion2D
             trajectory: list[dict] = []
-            
+
             obs, info = env.reset()
             agent.reset(obs, info)
 
@@ -218,7 +222,9 @@ def collect_geom2d_demonstrations(
                     action = agent.step()
 
                     # Take step in environment
-                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    next_obs, reward, terminated, truncated, next_info = env.step(
+                        action
+                    )
                     done = terminated or truncated
 
                     # Store transition
@@ -258,7 +264,9 @@ def collect_geom2d_demonstrations(
                     break
 
             # Check success
-            success = next_info.get("success", False) if "next_info" in locals() else False
+            success = (
+                next_info.get("success", False) if "next_info" in locals() else False
+            )
 
             log_message(
                 f"  Generated trajectory: {len(trajectory)} steps, "
@@ -277,7 +285,8 @@ def collect_geom2d_demonstrations(
                     # Handle observation format
                     if isinstance(obs, dict):
                         state = obs.get(
-                            "state", obs.get("observation", np.zeros(4, dtype=np.float32))
+                            "state",
+                            obs.get("observation", np.zeros(4, dtype=np.float32)),
                         )
                         image = obs.get("image", np.zeros((64, 64, 3), dtype=np.uint8))
                     else:
@@ -517,10 +526,10 @@ def load_precomputed_demonstrations(
 
 def _parse_environment_name(env_name: str) -> tuple[str, int]:
     """Parse environment name to extract type and parameter.
-    
+
     Args:
         env_name: Environment name like 'motion2d-p1', 'stickbutton2d-b3', etc.
-        
+
     Returns:
         Tuple of (environment_type, parameter_value)
     """
@@ -533,8 +542,8 @@ def _parse_environment_name(env_name: str) -> tuple[str, int]:
         else:
             param = 2  # Default
         return "motion2d", param
-        
-    elif env_name.startswith("stickbutton2d"):
+
+    if env_name.startswith("stickbutton2d"):
         # stickbutton2d-b1, stickbutton2d-b5, etc.
         parts = env_name.split("-")
         if len(parts) >= 2 and parts[1].startswith("b"):
@@ -542,8 +551,8 @@ def _parse_environment_name(env_name: str) -> tuple[str, int]:
         else:
             param = 1  # Default
         return "stickbutton2d", param
-        
-    elif env_name.startswith("obstruction2d"):
+
+    if env_name.startswith("obstruction2d"):
         # obstruction2d-o0, obstruction2d-o1, etc.
         parts = env_name.split("-")
         if len(parts) >= 2 and parts[1].startswith("o"):
@@ -551,8 +560,8 @@ def _parse_environment_name(env_name: str) -> tuple[str, int]:
         else:
             param = 1  # Default
         return "obstruction2d", param
-        
-    elif env_name.startswith("clutteredstorage2d"):
+
+    if env_name.startswith("clutteredstorage2d"):
         # clutteredstorage2d-b1, clutteredstorage2d-b7, etc.
         parts = env_name.split("-")
         if len(parts) >= 2 and parts[1].startswith("b"):
@@ -560,8 +569,8 @@ def _parse_environment_name(env_name: str) -> tuple[str, int]:
         else:
             param = 1  # Default
         return "clutteredstorage2d", param
-        
-    elif env_name.startswith("clutteredretrieval2d"):
+
+    if env_name.startswith("clutteredretrieval2d"):
         # clutteredretrieval2d-o1, clutteredretrieval2d-o3, etc.
         parts = env_name.split("-")
         if len(parts) >= 2 and parts[1].startswith("o"):
@@ -569,10 +578,9 @@ def _parse_environment_name(env_name: str) -> tuple[str, int]:
         else:
             param = 1  # Default
         return "clutteredretrieval2d", param
-        
-    else:
-        # Fallback: assume motion2d
-        return "motion2d", 2
+
+    # Fallback: assume motion2d
+    return "motion2d", 2
 
 
 def main():
@@ -633,7 +641,10 @@ def main():
     parser.add_argument(
         "--env-param",
         type=int,
-        help="Generic environment parameter (passages, buttons, obstructions, blocks, etc.) - auto-detects based on environment name",
+        help=(
+            "Generic environment parameter (passages, buttons, obstructions, "
+            "blocks, etc.) - auto-detects based on environment name"
+        ),
     )
     parser.add_argument(
         "--max-abstract-plans",
@@ -841,8 +852,9 @@ def main():
 
                 # Extract environment type and parameter
                 env_type, env_param = _parse_environment_name(args.env)
-                
-                # Use env_param argument if provided, otherwise use parsed or default values
+
+                # Use env_param argument if provided, otherwise use parsed or
+                # default values
                 if args.env_param is not None:
                     env_param = args.env_param
                 elif env_type == "motion2d":
