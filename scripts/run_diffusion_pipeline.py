@@ -56,13 +56,7 @@ if third_party_prbench_bilevel.exists():
 if third_party_prbench_models.exists():
     sys.path.insert(0, str(third_party_prbench_models))
 
-# Import expert demonstration collection
-try:
-    from collect_motion2d_demonstrations import collect_motion2d_demonstrations
-
-    EXPERT_COLLECTION_AVAILABLE = True
-except ImportError:
-    EXPERT_COLLECTION_AVAILABLE = False
+# Expert demonstration collection is always available through generic collector
 
 
 def collect_geom2d_demonstrations(
@@ -851,12 +845,6 @@ def main():
 
             if args.data_type == "expert":
                 # Use expert demonstration collection for geom2d environments
-                if not EXPERT_COLLECTION_AVAILABLE:
-                    raise ImportError(
-                        "Expert demonstration collection not available. "
-                        "Make sure collect_motion2d_demonstrations.py is in the same "
-                        "directory and bilevel planning third-party module is available."
-                    )
 
                 # Extract environment type and parameter
                 env_type, env_param = _parse_environment_name(args.env)
@@ -872,33 +860,19 @@ def main():
                 log_message("Using bilevel planning from third-party submodule")
                 log_message(f"Environment type: {env_type}, parameter: {env_param}")
 
-                # Use specialized Motion2D collector if available, otherwise use generic
-                if env_type == "motion2d" and EXPERT_COLLECTION_AVAILABLE:
-                    dataset_path = collect_motion2d_demonstrations(
-                        num_passages=env_param,
-                        num_episodes=args.data_episodes,
-                        output_dir=str(dataset_dir / dataset_name),
-                        max_steps_per_episode=1000,  # Reasonable default
-                        save_videos=args.save_demo_videos,
-                        max_abstract_plans=args.max_abstract_plans,
-                        samples_per_step=args.samples_per_step,
-                        planning_timeout=args.planning_timeout,
-                        seed=123,  # Fixed seed for reproducibility
-                    )
-                else:
-                    # Use generic geom2d collector
-                    dataset_path = collect_geom2d_demonstrations(
-                        env_name=env_type,
-                        env_param=env_param,
-                        num_episodes=args.data_episodes,
-                        output_dir=str(dataset_dir / dataset_name),
-                        max_steps_per_episode=1000,  # Reasonable default
-                        save_videos=args.save_demo_videos,
-                        max_abstract_plans=args.max_abstract_plans,
-                        samples_per_step=args.samples_per_step,
-                        planning_timeout=args.planning_timeout,
-                        seed=123,  # Fixed seed for reproducibility
-                    )
+                # Use generic geom2d collector for all environments
+                dataset_path = collect_geom2d_demonstrations(
+                    env_name=env_type,
+                    env_param=env_param,
+                    num_episodes=args.data_episodes,
+                    output_dir=str(dataset_dir / dataset_name),
+                    max_steps_per_episode=1000,  # Reasonable default
+                    save_videos=args.save_demo_videos,
+                    max_abstract_plans=args.max_abstract_plans,
+                    samples_per_step=args.samples_per_step,
+                    planning_timeout=args.planning_timeout,
+                    seed=123,  # Fixed seed for reproducibility
+                )
             elif args.data_type == "precomputed":
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
