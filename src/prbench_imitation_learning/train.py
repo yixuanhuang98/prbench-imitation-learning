@@ -12,7 +12,7 @@ from torch import optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
-from .policy import DiffusionPolicy, DiffusionPolicyDataset
+from .policy import BehaviorCloningPolicy, DiffusionPolicy, DiffusionPolicyDataset
 
 # LeRobot imports
 try:
@@ -540,3 +540,179 @@ def get_default_training_config() -> Dict[str, Any]:
         "use_wandb": False,
         "force_cpu": False,
     }
+
+
+def train_behavior_cloning_policy(
+    dataset_path: str,
+    model_save_path: str,
+    config: Dict[str, Any],
+    log_dir: str = "./logs",
+) -> BehaviorCloningPolicy:
+    """Train behavior cloning policy on the dataset.
+
+    Args:
+        dataset_path: Path to the dataset
+        model_save_path: Path to save the trained model
+        config: Training configuration
+        log_dir: Directory to save logs
+
+    Returns:
+        Trained behavior cloning policy
+    """
+    # Setup logging
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir_path / "bc_training.log"
+
+    def log_message(message: str):
+        """Log message to both console and file."""
+        print(message)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - {message}\n")
+
+    log_message("Starting Behavior Cloning training...")
+    log_message(f"Dataset: {dataset_path}")
+    log_message(f"Model save path: {model_save_path}")
+    log_message(f"Config: {config}")
+
+    # Set device
+    if config.get("force_cpu", False):
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log_message(f"Using device: {device}")
+
+    # Create dataset
+    dataset = DiffusionPolicyDataset(
+        dataset_path=dataset_path,
+        obs_horizon=config["obs_horizon"],
+        action_horizon=config["action_horizon"],
+        pred_horizon=config["pred_horizon"],
+    )
+
+    # Create data loader
+    dataloader = DataLoader(
+        dataset, batch_size=config["batch_size"], shuffle=True, num_workers=0
+    )
+
+    log_message(f"Dataset size: {len(dataset)}")
+    log_message(f"Batch size: {config['batch_size']}")
+
+    # Get dimensions from dataset
+    obs_dim = dataset.obs_dim
+    action_dim = dataset.action_dim
+
+    log_message(f"Observation dimension: {obs_dim}")
+    log_message(f"Action dimension: {action_dim}")
+
+    # Create model
+    model = BehaviorCloningPolicy(
+        obs_dim=obs_dim,
+        action_dim=action_dim,
+        obs_horizon=config["obs_horizon"],
+        action_horizon=config["action_horizon"],
+        hidden_dim=config.get("hidden_dim", 512),
+        num_layers=config.get("num_layers", 3),
+    ).to(device)
+
+    log_message(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
+
+    # Setup optimizer and scheduler
+    optimizer = optim.AdamW(model.parameters(), lr=config["learning_rate"])
+    scheduler = CosineAnnealingLR(optimizer, T_max=config["num_epochs"])
+
+    # Setup wandb if requested
+    if config.get("use_wandb", False):
+        wandb.init(
+            project="prbench-behavior-cloning",
+            config=config,
+            name=f"bc_{Path(dataset_path).name}",
+        )
+
+    # Training loop
+    model.train()
+    best_loss = float("inf")
+
+    for epoch in range(config["num_epochs"]):
+        epoch_loss = 0.0
+        num_batches = 0
+
+        for batch_idx, batch in enumerate(dataloader):
+            obs_seq = batch["obs_states"].to(device)  # [B, obs_horizon, obs_dim]
+            action_seq = batch["actions"].to(device)  # [B, action_horizon, action_dim]
+
+            # Forward pass
+            predicted_actions = model(obs_seq)
+
+            # Compute MSE loss
+            loss = F.mse_loss(predicted_actions, action_seq)
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+
+            # Log progress
+            if batch_idx % 10 == 0:
+                log_message(
+                    f"Epoch {epoch+1}/{config['num_epochs']}, "
+                    f"Batch {batch_idx+1}/{len(dataloader)}, "
+                    f"Loss: {loss.item():.6f}"
+                )
+
+        # Update learning rate
+        scheduler.step()
+
+        # Compute average loss
+        avg_loss = epoch_loss / num_batches
+
+        log_message(
+            f"Epoch {epoch+1}/{config['num_epochs']} completed. "
+            f"Average loss: {avg_loss:.6f}, "
+            f"LR: {scheduler.get_last_lr()[0]:.6f}"
+        )
+
+        # Log to wandb if enabled
+        if config.get("use_wandb", False):
+            wandb.log(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": avg_loss,
+                    "learning_rate": scheduler.get_last_lr()[0],
+                }
+            )
+
+        # Save best model
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            log_message(f"New best loss: {best_loss:.6f}. Saving model...")
+
+            # Save model checkpoint
+            checkpoint = {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "epoch": epoch + 1,
+                "loss": best_loss,
+                "config": {
+                    **config,
+                    "obs_dim": obs_dim,
+                    "action_dim": action_dim,
+                    "policy_type": "behavior_cloning",
+                },
+            }
+
+            torch.save(checkpoint, model_save_path)
+
+    # Final save
+    log_message("Training completed!")
+    log_message(f"Best loss: {best_loss:.6f}")
+    log_message(f"Model saved to: {model_save_path}")
+
+    if config.get("use_wandb", False):
+        wandb.finish()
+
+    return model

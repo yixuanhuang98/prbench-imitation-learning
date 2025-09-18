@@ -13,7 +13,7 @@ import prbench
 import torch
 from matplotlib import animation
 
-from .policy import DiffusionPolicy
+from .policy import BehaviorCloningPolicy, DiffusionPolicy
 
 # LeRobot imports
 try:
@@ -73,10 +73,31 @@ class PolicyEvaluator:
             )
         config = checkpoint["config"]
 
-        # Check if this is a LeRobot policy
+        # Check policy type
         policy_type = config.get("policy_type", "custom")
 
-        if policy_type == "lerobot":
+        if policy_type == "behavior_cloning":
+            # Create behavior cloning model
+            model = BehaviorCloningPolicy(
+                obs_dim=config["obs_dim"],
+                action_dim=config["action_dim"],
+                obs_horizon=config["obs_horizon"],
+                action_horizon=config["action_horizon"],
+                hidden_dim=config.get("hidden_dim", 512),
+                num_layers=config.get("num_layers", 3),
+            )
+
+            # Load state dict
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(self.device)
+            model.eval()
+
+            print(
+                f"Behavior Cloning model loaded successfully "
+                f"(epoch {checkpoint['epoch']}, "
+                f"loss: {checkpoint['loss']:.6f})"
+            )
+        elif policy_type == "lerobot":
             if not LEROBOT_AVAILABLE:
                 raise ImportError(
                     "LeRobot is not available but model was trained with "
@@ -165,10 +186,23 @@ class PolicyEvaluator:
         while len(self.obs_history) < self.config["obs_horizon"]:
             self.obs_history.append(obs_state)
 
-        # Check if this is a LeRobot policy
+        # Check policy type
         policy_type = self.config.get("policy_type", "custom")
 
-        if policy_type == "lerobot":
+        if policy_type == "behavior_cloning":
+            # Behavior cloning expects flattened observation sequence
+            obs_seq = np.stack(list(self.obs_history))
+            obs_seq_tensor = (
+                torch.from_numpy(obs_seq).float().unsqueeze(0).to(self.device)
+            )
+
+            # Predict action sequence
+            with torch.no_grad():
+                action_seq = self.model(obs_seq_tensor)
+
+            # Return first action
+            predicted_action = action_seq[0, 0].cpu().numpy()
+        elif policy_type == "lerobot":
             # LeRobot expects exactly n_obs_steps observations
             n_obs_steps = getattr(self.model, "diffusion", None)
             n_obs_steps = (

@@ -402,3 +402,78 @@ class DiffusionPolicy(nn.Module):
             ).prev_sample
 
         return actions_pred
+
+
+class BehaviorCloningPolicy(nn.Module):
+    """Simple Behavior Cloning Policy using MLP."""
+
+    def __init__(
+        self,
+        obs_dim: int,
+        action_dim: int,
+        obs_horizon: int = 2,
+        action_horizon: int = 8,
+        hidden_dim: int = 512,
+        num_layers: int = 3,
+    ):
+        """
+        Args:
+            obs_dim: Observation dimension
+            action_dim: Action dimension
+            obs_horizon: Number of observation frames to use as context
+            action_horizon: Number of action frames to predict
+            hidden_dim: Hidden layer dimension
+            num_layers: Number of hidden layers
+        """
+        super().__init__()
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.obs_horizon = obs_horizon
+        self.action_horizon = action_horizon
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        # Input dimension is flattened observation sequence
+        input_dim = obs_dim * obs_horizon
+
+        # Output dimension is flattened action sequence
+        output_dim = action_dim * action_horizon
+
+        # Build MLP layers
+        layers = []
+
+        # Input layer
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU())
+
+        # Hidden layers
+        for _ in range(num_layers - 1):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(0.1))  # Add dropout for regularization
+
+        # Output layer
+        layers.append(nn.Linear(hidden_dim, output_dim))
+
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, obs_seq: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            obs_seq: Observation sequence tensor of shape [batch_size, obs_horizon, obs_dim]
+
+        Returns:
+            Predicted action sequence of shape [batch_size, action_horizon, action_dim]
+        """
+        batch_size = obs_seq.shape[0]
+
+        # Flatten observation sequence
+        obs_flat = obs_seq.reshape(batch_size, -1)
+
+        # Forward pass through network
+        action_flat = self.network(obs_flat)
+
+        # Reshape to action sequence
+        actions = action_flat.reshape(batch_size, self.action_horizon, self.action_dim)
+
+        return actions
