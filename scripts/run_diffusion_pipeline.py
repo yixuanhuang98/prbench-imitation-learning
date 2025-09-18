@@ -849,12 +849,9 @@ def main():
                 # Extract environment type and parameter
                 env_type, env_param = _parse_environment_name(args.env)
 
-                # Use env_param argument if provided, otherwise use parsed or
-                # default values
+                # Use env_param argument if provided, otherwise use parsed value
                 if args.env_param is not None:
                     env_param = args.env_param
-                elif env_type == "motion2d":
-                    env_param = args.num_passages  # Backward compatibility
 
                 log_message("Using BilevelPlanningAgent for expert demonstrations")
                 log_message("Using bilevel planning from third-party submodule")
