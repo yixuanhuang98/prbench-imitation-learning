@@ -159,7 +159,7 @@ class PolicyEvaluator:
                 f"loss: {checkpoint['loss']:.6f})"
             )
 
-        return model, config
+        return model, config  # type: ignore
 
     def predict_action(self, observation) -> np.ndarray:
         """Predict action for a single observation.

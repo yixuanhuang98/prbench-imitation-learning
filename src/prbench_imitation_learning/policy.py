@@ -460,7 +460,8 @@ class BehaviorCloningPolicy(nn.Module):
     def forward(self, obs_seq: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            obs_seq: Observation sequence tensor of shape [batch_size, obs_horizon, obs_dim]
+            obs_seq: Observation sequence tensor of shape
+            [batch_size, obs_horizon, obs_dim]
 
         Returns:
             Predicted action sequence of shape [batch_size, action_horizon, action_dim]
