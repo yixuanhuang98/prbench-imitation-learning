@@ -6,9 +6,15 @@ from .data_generation import (
     setup_environment,
 )
 from .evaluate import PolicyEvaluator, evaluate_policy
-from .policy import ConditionalUNet1D, DiffusionPolicy, DiffusionPolicyDataset
+from .policy import (
+    BehaviorCloningPolicy,
+    ConditionalUNet1D,
+    DiffusionPolicy,
+    DiffusionPolicyDataset,
+)
 from .train import (
     get_default_training_config,
+    train_behavior_cloning_policy,
     train_diffusion_policy,
     train_lerobot_diffusion_policy,
 )
@@ -17,10 +23,12 @@ __all__ = [
     # Policy models
     "DiffusionPolicy",
     "DiffusionPolicyDataset",
+    "BehaviorCloningPolicy",
     "ConditionalUNet1D",
     # Training
     "train_diffusion_policy",
     "train_lerobot_diffusion_policy",
+    "train_behavior_cloning_policy",
     "get_default_training_config",
     # Evaluation
     "PolicyEvaluator",

@@ -21,6 +21,7 @@ from prbench_imitation_learning import (
     generate_lerobot_dataset,
     get_available_environments,
     get_default_training_config,
+    train_behavior_cloning_policy,
     train_diffusion_policy,
     train_lerobot_diffusion_policy,
 )
@@ -55,13 +56,7 @@ if third_party_prbench_bilevel.exists():
 if third_party_prbench_models.exists():
     sys.path.insert(0, str(third_party_prbench_models))
 
-# Import expert demonstration collection
-try:
-    from collect_motion2d_demonstrations import collect_motion2d_demonstrations
-
-    EXPERT_COLLECTION_AVAILABLE = True
-except ImportError:
-    EXPERT_COLLECTION_AVAILABLE = False
+# Expert demonstration collection is always available through generic collector
 
 
 def collect_geom2d_demonstrations(
@@ -689,8 +684,11 @@ def main():
         "--policy-type",
         type=str,
         default="custom",
-        choices=["custom", "lerobot"],
-        help="Type of diffusion policy to use (custom implementation or LeRobot)",
+        choices=["custom", "lerobot", "behavior_cloning"],
+        help=(
+            "Type of policy to use (custom diffusion, LeRobot diffusion, "
+            "or behavior cloning)"
+        ),
     )
 
     # Evaluation options
@@ -847,54 +845,31 @@ def main():
 
             if args.data_type == "expert":
                 # Use expert demonstration collection for geom2d environments
-                if not EXPERT_COLLECTION_AVAILABLE:
-                    raise ImportError(
-                        "Expert demonstration collection not available. "
-                        "Make sure collect_motion2d_demonstrations.py is in the same "
-                        "directory and bilevel planning third-party module is available."
-                    )
 
                 # Extract environment type and parameter
                 env_type, env_param = _parse_environment_name(args.env)
 
-                # Use env_param argument if provided, otherwise use parsed or
-                # default values
+                # Use env_param argument if provided, otherwise use parsed value
                 if args.env_param is not None:
                     env_param = args.env_param
-                elif env_type == "motion2d":
-                    env_param = args.num_passages  # Backward compatibility
 
                 log_message("Using BilevelPlanningAgent for expert demonstrations")
                 log_message("Using bilevel planning from third-party submodule")
                 log_message(f"Environment type: {env_type}, parameter: {env_param}")
 
-                # Use specialized Motion2D collector if available, otherwise use generic
-                if env_type == "motion2d" and EXPERT_COLLECTION_AVAILABLE:
-                    dataset_path = collect_motion2d_demonstrations(
-                        num_passages=env_param,
-                        num_episodes=args.data_episodes,
-                        output_dir=str(dataset_dir / dataset_name),
-                        max_steps_per_episode=1000,  # Reasonable default
-                        save_videos=args.save_demo_videos,
-                        max_abstract_plans=args.max_abstract_plans,
-                        samples_per_step=args.samples_per_step,
-                        planning_timeout=args.planning_timeout,
-                        seed=123,  # Fixed seed for reproducibility
-                    )
-                else:
-                    # Use generic geom2d collector
-                    dataset_path = collect_geom2d_demonstrations(
-                        env_name=env_type,
-                        env_param=env_param,
-                        num_episodes=args.data_episodes,
-                        output_dir=str(dataset_dir / dataset_name),
-                        max_steps_per_episode=1000,  # Reasonable default
-                        save_videos=args.save_demo_videos,
-                        max_abstract_plans=args.max_abstract_plans,
-                        samples_per_step=args.samples_per_step,
-                        planning_timeout=args.planning_timeout,
-                        seed=123,  # Fixed seed for reproducibility
-                    )
+                # Use generic geom2d collector for all environments
+                dataset_path = collect_geom2d_demonstrations(
+                    env_name=env_type,
+                    env_param=env_param,
+                    num_episodes=args.data_episodes,
+                    output_dir=str(dataset_dir / dataset_name),
+                    max_steps_per_episode=1000,  # Reasonable default
+                    save_videos=args.save_demo_videos,
+                    max_abstract_plans=args.max_abstract_plans,
+                    samples_per_step=args.samples_per_step,
+                    planning_timeout=args.planning_timeout,
+                    seed=123,  # Fixed seed for reproducibility
+                )
             elif args.data_type == "precomputed":
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
@@ -955,6 +930,13 @@ def main():
 
             if args.policy_type == "lerobot":
                 train_lerobot_diffusion_policy(
+                    dataset_path=dataset_path,
+                    model_save_path=model_path,
+                    config=train_config,
+                    log_dir=str(log_dir),
+                )
+            elif args.policy_type == "behavior_cloning":
+                train_behavior_cloning_policy(
                     dataset_path=dataset_path,
                     model_save_path=model_path,
                     config=train_config,

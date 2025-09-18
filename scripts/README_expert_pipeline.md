@@ -1,11 +1,10 @@
-# Expert Demonstration Pipeline for Motion2D
+# Expert Demonstration Pipeline for Geom2D Environments
 
-This directory contains scripts for collecting expert demonstrations from Motion2D environments using BilevelPlanningAgent and training diffusion policies on them.
+This directory contains scripts for collecting expert demonstrations from all geom2d environments (Motion2D, Obstruction2D, StickButton2D, etc.) using BilevelPlanningAgent and training diffusion policies on them.
 
 ## Files
 
-- `collect_motion2d_demonstrations.py`: Collects expert demonstrations using BilevelPlanningAgent
-- `run_diffusion_pipeline.py`: Complete pipeline for data generation, training, and evaluation (now supports expert data)
+- `run_diffusion_pipeline.py`: Complete pipeline for data generation, training, and evaluation with built-in expert demonstration collection for all geom2d environments
 - `run_expert_pipeline.sh`: Wrapper script that handles conda environment switching automatically
 
 ## Prerequisites
@@ -27,12 +26,15 @@ Use the wrapper script that automatically handles environment switching:
 # Basic expert pipeline for Motion2D with 2 passages
 ./run_expert_pipeline.sh --env motion2d-p2 --data-type expert --data-episodes 20
 
+# Basic expert pipeline for Obstruction2D with 1 obstruction
+./run_expert_pipeline.sh --env obstruction2d-o1 --data-type expert --data-episodes 20
+
 # With custom parameters
 ./run_expert_pipeline.sh \
   --env motion2d-p2 \
   --data-type expert \
   --data-episodes 50 \
-  --num-passages 2 \
+  --env-param 2 \
   --max-abstract-plans 15 \
   --samples-per-step 5 \
   --planning-timeout 60.0 \
@@ -51,7 +53,7 @@ python run_diffusion_pipeline.py \
   --env motion2d-p2 \
   --data-type expert \
   --data-episodes 20 \
-  --num-passages 2 \
+  --env-param 2 \
   --skip-training \
   --skip-evaluation
 
@@ -71,17 +73,21 @@ Just collect demonstrations without training:
 
 ```bash
 conda activate pr_planning
-python collect_motion2d_demonstrations.py \
-  --num_episodes 50 \
-  --num_passages 2 \
-  --output_dir ./my_expert_data \
-  --save_videos
+python run_diffusion_pipeline.py \
+  --env motion2d-p2 \
+  --data-type expert \
+  --data-episodes 50 \
+  --env-param 2 \
+  --save-demo-videos \
+  --skip-training \
+  --skip-evaluation
 ```
 
 ## Parameters for Expert Data Collection
 
 ### Environment Parameters
-- `--num-passages`: Number of passages in Motion2D (1, 2, or 3)
+- `--env`: Environment name (e.g., motion2d-p2, obstruction2d-o1, stickbutton2d-b3, etc.)
+- `--env-param`: Generic environment parameter (passages, buttons, obstructions, blocks, etc.) - auto-detects from environment name if not provided
 - `--data-episodes`: Number of episodes to collect
 
 ### BilevelPlanningAgent Parameters
@@ -154,13 +160,14 @@ diffusion_pipeline_results/
 - The wrapper script will check for environment existence before running
 
 ### Import Errors
-- Ensure `collect_motion2d_demonstrations.py` is in the same directory as `run_diffusion_pipeline.py`
 - Check that all required packages are installed in the respective environments
+- Ensure bilevel planning third-party modules are properly set up
 
 ### Planning Failures
 - Increase `--planning-timeout` if the agent times out frequently
 - Try reducing `--max-abstract-plans` or `--samples-per-step` for faster but potentially lower quality planning
-- Motion2D with more passages is more challenging - start with `--num-passages 1` for testing
+- Motion2D with more passages is more challenging - start with motion2d-p1 for testing
+- Different environments have different difficulty levels - try simpler parameter values first
 
 ### Memory Issues
 - Reduce `--batch-size` if you run out of GPU memory during training
