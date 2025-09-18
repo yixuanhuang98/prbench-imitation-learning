@@ -98,8 +98,12 @@ def collect_geom2d_demonstrations(
     # pylint: disable=import-outside-toplevel
     import prbench
     from gymnasium.wrappers import RecordVideo
-    from prbench_bilevel_planning.agent import BilevelPlanningAgent # pylint: disable=import-error
-    from prbench_bilevel_planning.env_models import create_bilevel_planning_models # pylint: disable=import-error
+    from prbench_bilevel_planning.agent import (  # pylint: disable=import-error
+        BilevelPlanningAgent,
+    )
+    from prbench_bilevel_planning.env_models import (  # pylint: disable=import-error
+        create_bilevel_planning_models,
+    )
 
     # Setup logging
     log_dir = Path("./logs")
