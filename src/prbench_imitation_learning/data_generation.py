@@ -76,8 +76,51 @@ def _save_video_frames(frames: List[np.ndarray], video_path: str):
         print(f"  Warning: Failed to save video {video_path}: {e}")
 
 
+def _filter_motion2d_observation(obs: np.ndarray) -> np.ndarray:
+    """Filter Motion2D observation to keep only essential components.
+    
+    Extracts:
+    - Robot pose: indices 0-2 (x, y, theta)
+    - Target position: indices 9-10 (x, y)  
+    - Target dimensions: indices 17-18 (width, height)
+    
+    Args:
+        obs: Full 19-dimensional observation vector
+        
+    Returns:
+        Filtered 7-dimensional observation vector
+    """
+    if len(obs) >= 19:
+        # Extract essential components: robot_pose(3) + target_pos(2) + target_size(2) = 7D
+        essential_indices = [0, 1, 2, 9, 10, 17, 18]
+        return obs[essential_indices].astype(np.float32)
+    else:
+        # Fallback for unexpected observation sizes
+        return obs.astype(np.float32)
+
+
+def _filter_motion2d_action(action: np.ndarray) -> np.ndarray:
+    """Filter Motion2D action to keep only movement components.
+    
+    Extracts:
+    - Movement: indices 0-2 (dx, dy, dtheta)
+    
+    Args:
+        action: Full 5-dimensional action vector
+        
+    Returns:
+        Filtered 3-dimensional action vector
+    """
+    if len(action) >= 3:
+        # Extract only movement components: dx, dy, dtheta
+        return action[:3].astype(np.float32)
+    else:
+        # Fallback for unexpected action sizes
+        return action.astype(np.float32)
+
+
 def create_dataset_features(
-    env: gym.Env, image_height: int = 256, image_width: int = 256
+    env: gym.Env, image_height: int = 256, image_width: int = 256, is_motion2d: bool = False
 ) -> Dict[str, Any]:
     """Create LeRobot dataset features based on environment specifications."""
 
@@ -89,9 +132,9 @@ def create_dataset_features(
     if isinstance(obs_space, gym.spaces.Dict):
         if "state" in obs_space.spaces:
             state_shape = obs_space.spaces["state"].shape
-            state_dim = state_shape[0] if state_shape is not None else 4
+            full_state_dim = state_shape[0] if state_shape is not None else 4
         else:
-            state_dim = 4  # Default fallback
+            full_state_dim = 4  # Default fallback
 
         if "image" in obs_space.spaces:
             image_shape = obs_space.spaces["image"].shape
@@ -102,14 +145,20 @@ def create_dataset_features(
     else:
         # Fallback for non-dict observation spaces
         obs_shape = getattr(obs_space, "shape", None)
-        state_dim = obs_shape[0] if obs_shape is not None else 4
+        full_state_dim = obs_shape[0] if obs_shape is not None else 4
         image_shape = (image_height, image_width, 3)
 
-    # Action dimension
-    if isinstance(action_space, gym.spaces.Box):
-        action_dim = action_space.shape[0]
+    # Adjust dimensions for Motion2D filtering
+    if is_motion2d:
+        state_dim = 7  # Filtered state dimension for motion2d
+        action_dim = 3  # Filtered action dimension for motion2d
     else:
-        action_dim = 2  # Default fallback
+        state_dim = full_state_dim
+        # Action dimension
+        if isinstance(action_space, gym.spaces.Box):
+            action_dim = action_space.shape[0]
+        else:
+            action_dim = 2  # Default fallback
 
     print(f"State dimension: {state_dim}")
     print(f"Action dimension: {action_dim}")
@@ -225,7 +274,7 @@ def generate_random_trajectory(
 
 
 def convert_trajectory_to_dataset_format(
-    trajectory: List[Dict], episode_idx: int, start_frame_idx: int
+    trajectory: List[Dict], episode_idx: int, start_frame_idx: int, is_motion2d: bool = False
 ) -> List[Dict]:
     """Convert trajectory to LeRobot dataset format."""
     dataset_episodes = []
@@ -238,12 +287,19 @@ def convert_trajectory_to_dataset_format(
 
         # Handle different observation formats
         if isinstance(obs, dict):
-            state = obs.get("state", np.zeros(4, dtype=np.float32))
+            full_state = obs.get("state", np.zeros(19 if is_motion2d else 4, dtype=np.float32))
             image = obs.get("image", np.zeros((256, 256, 3), dtype=np.uint8))
         else:
             # Assume obs is the state directly
-            state = obs.astype(np.float32)
+            full_state = obs.astype(np.float32)
             image = np.zeros((256, 256, 3), dtype=np.uint8)  # Dummy image
+
+        # Apply filtering for motion2d
+        if is_motion2d:
+            state = _filter_motion2d_observation(full_state)
+            action = _filter_motion2d_action(action)
+        else:
+            state = full_state
 
         # Ensure correct dtypes and shapes
         if len(state.shape) == 0:
@@ -349,6 +405,9 @@ def generate_lerobot_dataset(
     log_message(f"  Data type: {data_type}")
     log_message(f"  Output: {output_path}")
 
+    # Check if this is a motion2d environment for filtering
+    is_motion2d = "motion2d" in env_name.lower()
+    
     # Generate trajectories
     all_episodes = []
     successful_episodes = 0
@@ -378,7 +437,7 @@ def generate_lerobot_dataset(
         if trajectory:
             # Convert to dataset format
             episode_data = convert_trajectory_to_dataset_format(
-                trajectory, episode_idx, frame_idx
+                trajectory, episode_idx, frame_idx, is_motion2d
             )
             all_episodes.extend(episode_data)
 

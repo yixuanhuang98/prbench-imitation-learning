@@ -13,6 +13,49 @@ import prbench
 import torch
 from matplotlib import animation
 
+
+def _filter_motion2d_observation(obs: np.ndarray) -> np.ndarray:
+    """Filter Motion2D observation to keep only essential components.
+    
+    Extracts:
+    - Robot pose: indices 0-2 (x, y, theta)
+    - Target position: indices 9-10 (x, y)  
+    - Target dimensions: indices 17-18 (width, height)
+    
+    Args:
+        obs: Full 19-dimensional observation vector
+        
+    Returns:
+        Filtered 7-dimensional observation vector
+    """
+    if len(obs) >= 19:
+        # Extract essential components: robot_pose(3) + target_pos(2) + target_size(2) = 7D
+        essential_indices = [0, 1, 2, 9, 10, 17, 18]
+        return obs[essential_indices].astype(np.float32)
+    else:
+        # Fallback for unexpected observation sizes
+        return obs.astype(np.float32)
+
+
+def _filter_motion2d_action(action: np.ndarray) -> np.ndarray:
+    """Filter Motion2D action to keep only movement components.
+    
+    Extracts:
+    - Movement: indices 0-2 (dx, dy, dtheta)
+    
+    Args:
+        action: Full 5-dimensional action vector
+        
+    Returns:
+        Filtered 3-dimensional action vector
+    """
+    if len(action) >= 3:
+        # Extract only movement components: dx, dy, dtheta
+        return action[:3].astype(np.float32)
+    else:
+        # Fallback for unexpected action sizes
+        return action.astype(np.float32)
+
 from .policy import BehaviorCloningPolicy, DiffusionPolicy
 
 # LeRobot imports
@@ -56,6 +99,9 @@ class PolicyEvaluator:
 
         # Setup observation history buffer
         self.obs_history = deque(maxlen=self.config["obs_horizon"])
+        
+        # Environment filtering flag (will be set when evaluation starts)
+        self.is_motion2d = False
 
     def _load_model(self) -> Tuple[DiffusionPolicy, Dict[str, Any]]:
         """Load the trained model from checkpoint."""
@@ -179,6 +225,10 @@ class PolicyEvaluator:
             # Assume observation is the state directly
             obs_state = observation
             obs_image = None
+
+        # Apply motion2d filtering if needed
+        if self.is_motion2d:
+            obs_state = _filter_motion2d_observation(obs_state)
 
         self.obs_history.append(obs_state)
 
@@ -361,6 +411,15 @@ class PolicyEvaluator:
                 predicted_action, nan=0.0, posinf=1.0, neginf=-1.0
             )
 
+        # Expand action back to full space for motion2d
+        if self.is_motion2d and len(predicted_action) == 3:
+            # Expand 3D action (dx, dy, dtheta) to 5D (dx, dy, dtheta, darm, vacuum)
+            full_action = np.zeros(5, dtype=np.float32)
+            full_action[:3] = predicted_action  # movement components
+            full_action[3] = 0.0  # darm (no arm movement)
+            full_action[4] = 0.0  # vacuum (no vacuum)
+            predicted_action = full_action
+
         return predicted_action
 
     def reset(self):
@@ -396,6 +455,9 @@ class PolicyEvaluator:
         else:
             output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if this is a motion2d environment for filtering
+        self.is_motion2d = "motion2d" in env_id.lower()
 
         # Setup environment
         try:

@@ -299,14 +299,20 @@ def collect_geom2d_demonstrations(
 
                     # Handle observation format
                     if isinstance(obs, dict):
-                        state = obs.get(
+                        full_state = obs.get(
                             "state",
-                            obs.get("observation", np.zeros(4, dtype=np.float32)),
+                            obs.get("observation", np.zeros(19, dtype=np.float32)),
                         )
                         image = obs.get("image", np.zeros((64, 64, 3), dtype=np.uint8))
                     else:
-                        state = obs.astype(np.float32)
+                        full_state = obs.astype(np.float32)
                         image = np.zeros((64, 64, 3), dtype=np.uint8)
+                    
+                    # Filter observation to essential components for motion2d
+                    if env_name == "motion2d":
+                        state = _filter_motion2d_observation(full_state)
+                    else:
+                        state = full_state
 
                     # Ensure correct dtypes and shapes
                     if len(state.shape) == 0:
@@ -314,6 +320,10 @@ def collect_geom2d_demonstrations(
                     else:
                         state = state.astype(np.float32)
 
+                    # Filter action to essential components for motion2d  
+                    if env_name == "motion2d":
+                        action = _filter_motion2d_action(action)
+                    
                     if len(action.shape) == 0:
                         action = np.array([action], dtype=np.float32)
                     else:
@@ -470,15 +480,21 @@ def load_precomputed_demonstrations(
 
                 # Handle observation format - Motion2D uses numpy arrays directly
                 if isinstance(obs, np.ndarray):
-                    state = obs.astype(np.float32)
+                    full_state = obs.astype(np.float32)
                 else:
-                    state = np.array(obs, dtype=np.float32)
+                    full_state = np.array(obs, dtype=np.float32)
+                
+                # Filter observation to essential components for motion2d
+                state = _filter_motion2d_observation(full_state)
 
                 # Handle action format
                 if isinstance(action, np.ndarray):
-                    action = action.astype(np.float32)
+                    full_action = action.astype(np.float32)
                 else:
-                    action = np.array(action, dtype=np.float32)
+                    full_action = np.array(action, dtype=np.float32)
+                
+                # Filter action to essential components for motion2d
+                action = _filter_motion2d_action(full_action)
 
                 # Create dummy image since Motion2D doesn't have visual observations
                 image = np.zeros((64, 64, 3), dtype=np.uint8)
@@ -537,6 +553,49 @@ def load_precomputed_demonstrations(
 
     print(f"Dataset saved to: {output_path}")
     return str(output_path)
+
+
+def _filter_motion2d_observation(obs: np.ndarray) -> np.ndarray:
+    """Filter Motion2D observation to keep only essential components.
+    
+    Extracts:
+    - Robot pose: indices 0-2 (x, y, theta)
+    - Target position: indices 9-10 (x, y)  
+    - Target dimensions: indices 17-18 (width, height)
+    
+    Args:
+        obs: Full 19-dimensional observation vector
+        
+    Returns:
+        Filtered 7-dimensional observation vector
+    """
+    if len(obs) >= 19:
+        # Extract essential components: robot_pose(3) + target_pos(2) + target_size(2) = 7D
+        essential_indices = [0, 1, 2, 9, 10, 17, 18]
+        return obs[essential_indices].astype(np.float32)
+    else:
+        # Fallback for unexpected observation sizes
+        return obs.astype(np.float32)
+
+
+def _filter_motion2d_action(action: np.ndarray) -> np.ndarray:
+    """Filter Motion2D action to keep only movement components.
+    
+    Extracts:
+    - Movement: indices 0-2 (dx, dy, dtheta)
+    
+    Args:
+        action: Full 5-dimensional action vector
+        
+    Returns:
+        Filtered 3-dimensional action vector
+    """
+    if len(action) >= 3:
+        # Extract only movement components: dx, dy, dtheta
+        return action[:3].astype(np.float32)
+    else:
+        # Fallback for unexpected action sizes
+        return action.astype(np.float32)
 
 
 def _parse_environment_name(env_name: str) -> tuple[str, int]:
