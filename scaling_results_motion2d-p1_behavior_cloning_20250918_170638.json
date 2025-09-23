@@ -1,0 +1,40 @@
+[
+  {
+    "experiment_name": "scaling_exp_motion2d-p1_behavior_cloning_1demo",
+    "env": "motion2d-p1",
+    "policy_type": "behavior_cloning",
+    "data_episodes": 1,
+    "train_epochs": 10000,
+    "eval_episodes": 10,
+    "success": true,
+    "mean_return": -400.0,
+    "std_return": 0.0,
+    "success_rate": 0.0,
+    "mean_length": 400.0,
+    "expert_success_rate": 100.0,
+    "expert_avg_reward": -82.0,
+    "total_expert_episodes": 1,
+    "successful_expert_episodes": 1,
+    "runtime": 70.48012328147888,
+    "results_dir": "diffusion_pipeline_results/scaling_exp_motion2d-p1_behavior_cloning_1demo"
+  },
+  {
+    "experiment_name": "scaling_exp_motion2d-p1_behavior_cloning_2demo",
+    "env": "motion2d-p1",
+    "policy_type": "behavior_cloning",
+    "data_episodes": 2,
+    "train_epochs": 10000,
+    "eval_episodes": 10,
+    "success": true,
+    "mean_return": -364.4,
+    "std_return": 106.80000000000001,
+    "success_rate": 0.0,
+    "mean_length": 364.4,
+    "expert_success_rate": 100.0,
+    "expert_avg_reward": -47.0,
+    "total_expert_episodes": 2,
+    "successful_expert_episodes": 2,
+    "runtime": 72.18045401573181,
+    "results_dir": "diffusion_pipeline_results/scaling_exp_motion2d-p1_behavior_cloning_2demo"
+  }
+]

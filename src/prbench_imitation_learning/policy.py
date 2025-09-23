@@ -411,8 +411,8 @@ class BehaviorCloningPolicy(nn.Module):
         self,
         obs_dim: int,
         action_dim: int,
-        obs_horizon: int = 2,
-        action_horizon: int = 8,
+        obs_horizon: int = 1,
+        action_horizon: int = 1,
         hidden_dim: int = 512,
         num_layers: int = 3,
     ):

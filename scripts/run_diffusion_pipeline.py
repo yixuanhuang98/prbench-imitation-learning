@@ -237,6 +237,8 @@ def collect_geom2d_demonstrations(
                         "reward": float(reward),
                         "next_obs": next_obs.copy(),
                         "done": done,
+                        "terminated": terminated,
+                        "truncated": truncated,
                         "info": info.copy() if hasattr(info, "copy") else dict(info),
                         "next_info": (
                             next_info.copy()
@@ -263,9 +265,23 @@ def collect_geom2d_demonstrations(
                     break
 
             # Check success
-            success = (
-                next_info.get("success", False) if "next_info" in locals() else False
-            )
+            # An episode is successful if:
+            # 1. Environment explicitly indicates success, OR
+            # 2. Episode terminated naturally (not truncated) before max steps
+            success = False
+            if "next_info" in locals():
+                # Check explicit success flag from environment
+                success = next_info.get("success", False)
+                
+                # If no explicit success flag, infer from termination conditions
+                if not success and len(trajectory) > 0:
+                    last_transition = trajectory[-1]
+                    # Success if terminated (not truncated) before reaching max steps
+                    # In gymnasium: terminated=True means task completion, truncated=True means timeout
+                    if (last_transition.get("terminated", False) and 
+                        not last_transition.get("truncated", False) and
+                        step_count < max_steps_per_episode):
+                        success = True
 
             log_message(
                 f"  Generated trajectory: {len(trajectory)} steps, "
