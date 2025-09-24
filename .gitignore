@@ -172,4 +172,5 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 diffusion_pipeline_results/
+scaling/
 logs/

@@ -16,9 +16,9 @@ def main():
     print("="*70)
     
     # Configuration for comprehensive experiment
-    env = "motion2d-p1"
+    env = "motion2d-p0"
     policy_type = "behavior_cloning"
-    demo_counts = [1, 2, 5, 10, 20, 50]  # Full range
+    demo_counts = [2, 5, 10, 20, 50, 100]  # Full range
     train_epochs = 10000  # More epochs for better training
     eval_episodes = 10  # More episodes for better statistics
     
@@ -37,6 +37,15 @@ def main():
         print("❌ Experiment cancelled.")
         return
     
+    # Create experiment directory
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    experiment_dir = f"scaling/{timestamp}"
+    
+    # Create experiment directory
+    import os
+    os.makedirs(experiment_dir, exist_ok=True)
+    print(f"📁 Created experiment directory: {experiment_dir}")
+    
     # Run experiments
     print("\n🚀 Starting comprehensive scaling experiment...")
     results = run_scaling_experiments(
@@ -44,12 +53,12 @@ def main():
         policy_type=policy_type,
         demo_counts=demo_counts,
         train_epochs=train_epochs,
-        eval_episodes=eval_episodes
+        eval_episodes=eval_episodes,
+        experiment_dir=experiment_dir
     )
     
-    # Save final results with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = f"comprehensive_scaling_results_{env}_{policy_type}_{timestamp}.json"
+    # Save results in the timestamped directory
+    results_file = f"{experiment_dir}/comprehensive_scaling_results_{env}_{policy_type}.json"
     
     import json
     with open(results_file, 'w') as f:
@@ -58,7 +67,7 @@ def main():
     print(f"\n💾 Final results saved to: {results_file}")
     
     # Create comprehensive visualization
-    figure_path = f"comprehensive_scaling_analysis_{env}_{policy_type}_{timestamp}.png"
+    figure_path = f"{experiment_dir}/comprehensive_scaling_analysis_{env}_{policy_type}.png"
     create_scaling_figure(results, save_path=figure_path, show_plot=False)
     
     print(f"\n🎉 COMPREHENSIVE EXPERIMENT COMPLETED!")

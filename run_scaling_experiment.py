@@ -184,7 +184,8 @@ def run_scaling_experiments(
     policy_type: str = "behavior_cloning",
     demo_counts: List[int] = None,
     train_epochs: int = 1,
-    eval_episodes: int = 1
+    eval_episodes: int = 1,
+    experiment_dir: str = None
 ) -> List[Dict[str, Any]]:
     """
     Run scaling experiments with different numbers of demonstrations.
@@ -195,6 +196,7 @@ def run_scaling_experiments(
         demo_counts: List of demonstration counts to test
         train_epochs: Number of training epochs per experiment
         eval_episodes: Number of evaluation episodes per experiment
+        experiment_dir: Directory to save intermediate results (optional)
         
     Returns:
         List of experiment results
@@ -231,7 +233,13 @@ def run_scaling_experiments(
         
         # Save intermediate results
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = f"scaling_results_{env}_{policy_type}_{timestamp}.json"
+        if experiment_dir:
+            # Ensure the directory exists
+            os.makedirs(experiment_dir, exist_ok=True)
+            results_file = f"{experiment_dir}/scaling_results_{env}_{policy_type}_{timestamp}.json"
+        else:
+            results_file = f"scaling_results_{env}_{policy_type}_{timestamp}.json"
+        
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
         
