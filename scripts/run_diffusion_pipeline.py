@@ -277,7 +277,8 @@ def collect_geom2d_demonstrations(
                 if not success and len(trajectory) > 0:
                     last_transition = trajectory[-1]
                     # Success if terminated (not truncated) before reaching max steps
-                    # In gymnasium: terminated=True means task completion, truncated=True means timeout
+                    # In gymnasium: terminated=True means task completion,
+                    # truncated=True means timeout
                     if (
                         last_transition.get("terminated", False)
                         and not last_transition.get("truncated", False)

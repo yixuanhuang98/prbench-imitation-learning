@@ -503,11 +503,13 @@ class PolicyEvaluator:
             episode_lengths.append(episode_length)
 
             # Check for success (if info contains success flag)
-            # If no explicit success flag, consider it successful if episode ended before max steps
+            # If no explicit success flag, consider it successful if episode ended
+            # before max steps
             if "success" in info:
                 success = info["success"]
             else:
-                # Success if episode terminated naturally (not truncated due to max steps)
+                # Success if episode terminated naturally (not truncated due to max
+                # steps)
                 success = episode_length < max_episode_steps and done
             success_rates.append(float(success))
             all_trajectories.append(trajectory)

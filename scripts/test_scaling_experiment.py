@@ -19,7 +19,7 @@ def main():
     train_epochs = 1
     eval_episodes = 1
 
-    print(f"Test configuration:")
+    print("Test configuration:")
     print(f"  Environment: {env}")
     print(f"  Policy: {policy_type}")
     print(f"  Demo counts: {demo_counts}")

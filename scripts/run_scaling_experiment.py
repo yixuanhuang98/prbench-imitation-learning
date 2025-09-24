@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-Scaling experiment script: Evaluate behavior cloning performance vs number of demonstrations.
+"""Scaling experiment script.
 
-This script runs experiments with different numbers of demonstrations and generates
-a figure showing the relationship between success rate and number of demonstrations.
+Evaluate behavior cloning performance vs number of demonstrations.
+
+This script runs experiments with different numbers of demonstrations and generates a
+figure showing the relationship between success rate and number of demonstrations.
 """
 
 import json
 import os
 import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -77,7 +77,7 @@ def run_experiment(
         # Run the experiment
         start_time = time.time()
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3600  # 1 hour timeout
+            cmd, capture_output=True, text=True, timeout=3600, check=False
         )
         end_time = time.time()
 
@@ -116,11 +116,11 @@ def run_experiment(
             }
 
         # Load results
-        with open(eval_results_path, "r") as f:
+        with open(eval_results_path, "r", encoding="utf-8") as f:
             eval_results = json.load(f)
 
-        with open(pipeline_summary_path, "r") as f:
-            pipeline_summary = json.load(f)
+        with open(pipeline_summary_path, "r", encoding="utf-8") as f:
+            json.load(f)  # Load but don't assign to avoid unused variable warning
 
         # Load dataset metadata for expert statistics
         dataset_metadata_path = (
@@ -131,16 +131,15 @@ def run_experiment(
         )
         expert_stats = {}
         if dataset_metadata_path.exists():
-            with open(dataset_metadata_path, "r") as f:
+            with open(dataset_metadata_path, "r", encoding="utf-8") as f:
                 expert_stats = json.load(f)
 
-        print(f"✅ Experiment completed successfully!")
-        print(f"📊 Results:")
+        print("✅ Experiment completed successfully!")
+        print("📊 Results:")
         print(f"   - Mean Return: {eval_results['mean_return']:.2f}")
         print(f"   - Success Rate: {eval_results['success_rate']:.2f}%")
-        print(
-            f"   - Expert Success Rate: {expert_stats.get('success_rate', 0.0) * 100:.2f}%"
-        )
+        expert_success = expert_stats.get("success_rate", 0.0) * 100
+        print(f"   - Expert Success Rate: {expert_success:.2f}%")
         print(f"   - Runtime: {end_time - start_time:.1f}s")
 
         return {
@@ -165,7 +164,7 @@ def run_experiment(
         }
 
     except subprocess.TimeoutExpired:
-        print(f"❌ Experiment timed out after 1 hour")
+        print("❌ Experiment timed out after 1 hour")
         return {
             "experiment_name": experiment_name,
             "env": env,
@@ -217,15 +216,15 @@ def run_scaling_experiments(
         demo_counts = [1, 2, 5, 10, 20, 50]
 
     print(f"\n{'='*100}")
-    print(f"🚀 STARTING SCALING EXPERIMENT")
-    print(f"{'='*100}")
+    print("🚀 STARTING SCALING EXPERIMENT")
+    print("=" * 100)
     print(f"Environment: {env}")
     print(f"Policy: {policy_type}")
     print(f"Demonstration counts: {demo_counts}")
     print(f"Training epochs per experiment: {train_epochs}")
     print(f"Evaluation episodes per experiment: {eval_episodes}")
     print(f"Total experiments: {len(demo_counts)}")
-    print(f"{'='*100}")
+    print("=" * 100)
 
     results = []
 
@@ -254,15 +253,14 @@ def run_scaling_experiments(
         else:
             results_file = f"scaling_results_{env}_{policy_type}_{timestamp}.json"
 
-        with open(results_file, "w") as f:
+        with open(results_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
 
         print(f"💾 Intermediate results saved to: {results_file}")
 
-    print(f"\n🎉 ALL EXPERIMENTS COMPLETED!")
-    print(
-        f"Total successful experiments: {sum(1 for r in results if r['success'])}/{len(results)}"
-    )
+    print("\n🎉 ALL EXPERIMENTS COMPLETED!")
+    successful_count = sum(1 for r in results if r["success"])
+    print(f"Total successful experiments: {successful_count}/{len(results)}")
 
     return results
 
@@ -358,7 +356,7 @@ def create_scaling_figure(
         plt.show()
 
     # Print summary statistics
-    print(f"\n📊 SCALING ANALYSIS SUMMARY")
+    print("\n📊 SCALING ANALYSIS SUMMARY")
     print(f"{'='*50}")
     print(
         f"{'Demos':<8} {'Success Rate':<12} {'Mean Return':<12} {'Expert Success':<15}"
@@ -366,8 +364,13 @@ def create_scaling_figure(
     print(f"{'='*50}")
 
     for _, row in df.iterrows():
+        demos = row["data_episodes"]
+        success_rate = row["success_rate"]
+        mean_return = row["mean_return"]
+        expert_success = row["expert_success_rate"]
         print(
-            f"{row['data_episodes']:<8} {row['success_rate']:<12.1f} {row['mean_return']:<12.2f} {row['expert_success_rate']:<15.1f}"
+            f"{demos:<8} {success_rate:<12.1f} {mean_return:<12.2f} "
+            f"{expert_success:<15.1f}"
         )
 
     # Calculate correlations
@@ -375,7 +378,7 @@ def create_scaling_figure(
         success_corr = np.corrcoef(df["data_episodes"], df["success_rate"])[0, 1]
         return_corr = np.corrcoef(df["data_episodes"], df["mean_return"])[0, 1]
 
-        print(f"\n📈 CORRELATIONS:")
+        print("\n📈 CORRELATIONS:")
         print(f"Success Rate vs Demonstrations: {success_corr:.3f}")
         print(f"Mean Return vs Demonstrations: {return_corr:.3f}")
 
@@ -392,7 +395,7 @@ def main():
     train_epochs = 1  # Fast for testing
     eval_episodes = 1  # Fast for testing
 
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  Environment: {env}")
     print(f"  Policy: {policy_type}")
     print(f"  Demo counts: {demo_counts}")
@@ -411,7 +414,7 @@ def main():
     # Save final results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_file = f"final_scaling_results_{env}_{policy_type}_{timestamp}.json"
-    with open(results_file, "w") as f:
+    with open(results_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     print(f"\n💾 Final results saved to: {results_file}")
@@ -420,7 +423,7 @@ def main():
     figure_path = f"scaling_analysis_{env}_{policy_type}_{timestamp}.png"
     create_scaling_figure(results, save_path=figure_path, show_plot=False)
 
-    print(f"\n🎉 EXPERIMENT COMPLETED!")
+    print("\n🎉 EXPERIMENT COMPLETED!")
     print(f"Results file: {results_file}")
     print(f"Figure file: {figure_path}")
 

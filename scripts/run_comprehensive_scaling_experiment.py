@@ -4,11 +4,14 @@
 This script runs a full scaling study with reasonable parameters for meaningful results.
 """
 
+import json
+import os
+from datetime import datetime
+
 import matplotlib
 from run_scaling_experiment import create_scaling_figure, run_scaling_experiments
 
 matplotlib.use("Agg")  # Use non-interactive backend
-from datetime import datetime
 
 
 def main():
@@ -23,7 +26,7 @@ def main():
     train_epochs = 10000  # More epochs for better training
     eval_episodes = 10  # More episodes for better statistics
 
-    print(f"Comprehensive configuration:")
+    print("Comprehensive configuration:")
     print(f"  Environment: {env}")
     print(f"  Policy: {policy_type}")
     print(f"  Demo counts: {demo_counts}")
@@ -41,9 +44,6 @@ def main():
     # Create experiment directory
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     experiment_dir = f"scaling/{timestamp}"
-
-    # Create experiment directory
-    import os
 
     os.makedirs(experiment_dir, exist_ok=True)
     print(f"📁 Created experiment directory: {experiment_dir}")
@@ -64,9 +64,7 @@ def main():
         f"{experiment_dir}/comprehensive_scaling_results_{env}_{policy_type}.json"
     )
 
-    import json
-
-    with open(results_file, "w") as f:
+    with open(results_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
     print(f"\n💾 Final results saved to: {results_file}")
@@ -77,21 +75,19 @@ def main():
     )
     create_scaling_figure(results, save_path=figure_path, show_plot=False)
 
-    print(f"\n🎉 COMPREHENSIVE EXPERIMENT COMPLETED!")
+    print("\n🎉 COMPREHENSIVE EXPERIMENT COMPLETED!")
     print(f"Results file: {results_file}")
     print(f"Figure file: {figure_path}")
 
     # Print summary
     successful_results = [r for r in results if r["success"]]
     if successful_results:
-        print(f"\n📊 FINAL SUMMARY:")
+        print("\n📊 FINAL SUMMARY:")
         print(f"Successful experiments: {len(successful_results)}/{len(results)}")
-        print(
-            f"Best policy success rate: {max(r['success_rate'] for r in successful_results):.1f}%"
-        )
-        print(
-            f"Expert success rate: {successful_results[0]['expert_success_rate']:.1f}%"
-        )
+        best_rate = max(r["success_rate"] for r in successful_results)
+        print(f"Best policy success rate: {best_rate:.1f}%")
+        expert_rate = successful_results[0]["expert_success_rate"]
+        print(f"Expert success rate: {expert_rate:.1f}%")
 
         # Check if there's improvement with more demonstrations
         if len(successful_results) > 1:
@@ -99,11 +95,13 @@ def main():
             last_success = successful_results[-1]["success_rate"]
             if last_success > first_success:
                 print(
-                    f"✅ Improvement observed: {first_success:.1f}% → {last_success:.1f}%"
+                    f"✅ Improvement observed: "
+                    f"{first_success:.1f}% → {last_success:.1f}%"
                 )
             else:
                 print(
-                    f"⚠️  No clear improvement: {first_success:.1f}% → {last_success:.1f}%"
+                    f"⚠️  No clear improvement: "
+                    f"{first_success:.1f}% → {last_success:.1f}%"
                 )
 
 
