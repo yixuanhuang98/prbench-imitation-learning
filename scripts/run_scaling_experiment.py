@@ -289,7 +289,7 @@ def create_scaling_figure(
     # Create figure with subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
     fig.suptitle(
-        f'Behavior Cloning Scaling Analysis: {df.iloc[0]["env"]}',
+        f'{df.iloc[0]["policy_type"].replace("_", " ").title()} Scaling Analysis: {df.iloc[0]["env"]}',
         fontsize=16,
         fontweight="bold",
     )

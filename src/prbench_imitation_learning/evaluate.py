@@ -376,6 +376,8 @@ class PolicyEvaluator:
         save_plots: bool = True,
         output_dir: str = None,
         max_episode_steps: int = 1000,
+        set_random_seed: bool = False,
+        seed: int = 123,
     ) -> Dict[str, Any]:
         """Evaluate the policy on the environment.
 
@@ -387,6 +389,8 @@ class PolicyEvaluator:
             save_plots: Whether to save evaluation plots
             output_dir: Directory to save results
             max_episode_steps: Maximum steps per episode to prevent infinite loops
+            set_random_seed: Whether to use specific random seeds for environment resets
+            seed: Random seed to use when set_random_seed is True
 
         Returns:
             Dictionary containing evaluation results
@@ -433,7 +437,9 @@ class PolicyEvaluator:
         for episode in range(num_episodes):
             log_message(f"Starting episode {episode+1}/{num_episodes}")
             self.reset()
-            obs, info = env.reset()
+            # Use specific seed if set_random_seed is True, otherwise use random seed
+            reset_seed = seed if set_random_seed else np.random.randint(0, 1000000)
+            obs, info = env.reset(seed=reset_seed)
 
             episode_return = 0.0
             episode_length = 0
@@ -681,6 +687,8 @@ def evaluate_policy(
     save_plots: bool = True,
     log_dir: str = "./logs",
     max_episode_steps: int = 1000,
+    set_random_seed: bool = False,
+    seed: int = 123,
 ) -> Dict[str, Any]:
     """Convenience function to evaluate a policy.
 
@@ -695,6 +703,8 @@ def evaluate_policy(
         save_plots: Whether to save plots
         log_dir: Directory for logs
         max_episode_steps: Maximum steps per episode
+        set_random_seed: Whether to use specific random seeds for environment resets
+        seed: Random seed to use when set_random_seed is True
 
     Returns:
         Evaluation results dictionary
@@ -708,4 +718,6 @@ def evaluate_policy(
         save_plots=save_plots,
         output_dir=output_dir,
         max_episode_steps=max_episode_steps,
+        set_random_seed=set_random_seed,
+        seed=seed,
     )
