@@ -70,6 +70,7 @@ def collect_geom2d_demonstrations(
     samples_per_step: int = 3,
     planning_timeout: float = 30.0,
     seed: int = 123,
+    set_random_seed: bool = False,
 ) -> str:
     """Collect expert demonstrations from any geom2d environment using
     BilevelPlanningAgent.
@@ -209,7 +210,9 @@ def collect_geom2d_demonstrations(
             # Use the same trajectory collection logic as Motion2D
             trajectory: list[dict] = []
 
-            obs, info = env.reset()
+            # Use specific seed if set_random_seed is True, otherwise use default
+            reset_seed = seed if set_random_seed else np.random.randint(0, 1000000)
+            obs, info = env.reset(seed=reset_seed)
             agent.reset(obs, info)
 
             step_count = 0
@@ -657,6 +660,17 @@ def main():
         help="Number of passages for Motion2D environment (only for expert data)",
     )
     parser.add_argument(
+        "--set-random-seed",
+        action="store_true",
+        help="Use specific random seeds for environment resets (for reproducibility)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=123,
+        help="Random seed to use when --set-random-seed is enabled",
+    )
+    parser.add_argument(
         "--env-param",
         type=int,
         help=(
@@ -788,7 +802,9 @@ def main():
     # Generate experiment name if not provided
     if not args.experiment_name:
         timestamp = time.strftime("%Y-%m-%d-%H%M%S")
-        args.experiment_name = f"{args.env}_{args.data_type}_{timestamp}"
+        args.experiment_name = (
+            f"{args.env}_{args.data_type}_{args.policy_type}_{timestamp}"
+        )
 
     # Setup directories
     output_dir = Path(args.output_dir) / args.experiment_name
@@ -845,6 +861,8 @@ def main():
                 "max_abstract_plans": args.max_abstract_plans,
                 "samples_per_step": args.samples_per_step,
                 "planning_timeout": args.planning_timeout,
+                "set_random_seed": args.set_random_seed,
+                "seed": args.seed,
             }
         )
 
@@ -887,7 +905,8 @@ def main():
                     max_abstract_plans=args.max_abstract_plans,
                     samples_per_step=args.samples_per_step,
                     planning_timeout=args.planning_timeout,
-                    seed=123,  # Fixed seed for reproducibility
+                    seed=args.seed,
+                    set_random_seed=args.set_random_seed,
                 )
             elif args.data_type == "precomputed":
                 # Use precomputed demonstrations
@@ -992,6 +1011,8 @@ def main():
                 save_plots=True,
                 log_dir=str(log_dir),
                 max_episode_steps=400,  # Short episodes for testing
+                set_random_seed=args.set_random_seed,
+                seed=args.seed,
             )
 
             log_message(f"✅ Evaluation completed: {eval_dir}")

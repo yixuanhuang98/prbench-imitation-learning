@@ -20,10 +20,10 @@ def main():
     print("=" * 70)
 
     # Configuration for comprehensive experiment
-    env = "motion2d-p0"
+    env = "motion2d-p1"
     policy_type = "behavior_cloning"
-    demo_counts = [2, 5, 10, 20]  # Full range
-    train_epochs = 10000  # More epochs for better training
+    demo_counts = [2, 5, 10, 20, 50, 100, 200]  # Full range
+    train_epochs = 1000  # More epochs for better training
     eval_episodes = 10  # More episodes for better statistics
 
     print("Comprehensive configuration:")
