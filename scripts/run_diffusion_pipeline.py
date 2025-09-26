@@ -802,7 +802,7 @@ def main():
     # Generate experiment name if not provided
     if not args.experiment_name:
         timestamp = time.strftime("%Y-%m-%d-%H%M%S")
-        args.experiment_name = f"{args.env}_{args.data_type}_{timestamp}"
+        args.experiment_name = f"{args.env}_{args.data_type}_{args.policy_type}_{timestamp}"
 
     # Setup directories
     output_dir = Path(args.output_dir) / args.experiment_name
