@@ -174,3 +174,5 @@ __pycache__/
 diffusion_pipeline_results/
 scaling/
 logs/
+checkpoint_evaluation_results/
+checkpoint_experiment_results/
