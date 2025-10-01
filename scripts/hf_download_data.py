@@ -9,7 +9,8 @@ Example usage:
     python hf_download_data.py --download_dir ./data --remote_path experiments/run1
 
     # Download with custom repository
-    python hf_download_data.py --download_dir ./data --remote_path data --repo_id org/dataset
+    python hf_download_data.py --download_dir ./data --remote_path data \\
+        --repo_id org/dataset
 
     # Download entire repository
     python hf_download_data.py --download_dir ./data --remote_path ""
@@ -21,8 +22,9 @@ Example usage:
 import argparse
 import os
 import shutil
+import sys
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 from huggingface_hub import HfFileSystem, hf_hub_download
 
@@ -30,7 +32,7 @@ from huggingface_hub import HfFileSystem, hf_hub_download
 REPO_ID = "vaibhavsaxena11/prbench-data"  # Change this to your desired repo ID
 
 
-def get_folder_structure(repo_id: str, remote_path: str = "") -> List[dict]:
+def get_folder_structure(repo_id: str, remote_path: str = "") -> List[Dict[str, Any]]:
     """Get the structure of files and folders in a HuggingFace repository path.
 
     Args:
@@ -38,7 +40,7 @@ def get_folder_structure(repo_id: str, remote_path: str = "") -> List[dict]:
         remote_path (str): Path in repository (empty for root)
 
     Returns:
-        List[dict]: List of file/folder information
+        List[Dict[str, Any]]: List of file/folder information
     """
     fs = HfFileSystem()
 
@@ -50,7 +52,8 @@ def get_folder_structure(repo_id: str, remote_path: str = "") -> List[dict]:
 
     try:
         files = fs.ls(hf_path, detail=True)
-        return files
+        # Ensure we only return dict objects (filter out any strings)
+        return [f for f in files if isinstance(f, dict)]
     except Exception as e:
         print(f"Error accessing {hf_path}: {e}")
         return []
@@ -86,6 +89,8 @@ def download_folder_from_hf(
             print(f"[DRY RUN] Would download from {hf_folder_path} to {download_dir}")
             print(f"  Found {len(files)} items:")
             for file in files:
+                if not isinstance(file, dict):
+                    continue
                 basename = os.path.basename(file["name"])
                 file_type = "📁" if file["type"] == "directory" else "📄"
                 print(f"    {file_type} {basename}")
@@ -99,6 +104,8 @@ def download_folder_from_hf(
         os.makedirs(download_dir, exist_ok=True)
 
         for file in files:
+            if not isinstance(file, dict):
+                continue
             filename = file["name"]  # Full path in HF
             basename = os.path.basename(filename)  # Just the file/folder name
 
@@ -174,6 +181,8 @@ def calculate_download_size(repo_id: str, remote_path: str = "") -> int:
     total_size = 0
 
     for file in files:
+        if not isinstance(file, dict):
+            continue
         if file["type"] == "file" and "size" in file:
             total_size += file.get("size", 0)
 
@@ -189,7 +198,8 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} PB"
 
 
-def main():
+def main() -> None:
+    """Main function to handle command line arguments and execute download."""
     parser = argparse.ArgumentParser(
         description="Download data from HuggingFace datasets repository",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -245,7 +255,7 @@ Examples:
         print(
             f"Error: Download path exists but is not a directory: {args.download_dir}"
         )
-        exit(1)
+        sys.exit(1)
 
     # Create download directory if it doesn't exist
     if not args.dry_run:
@@ -275,7 +285,7 @@ Examples:
     if not files:
         print(f"❌ No files found at path: {args.remote_path}")
         print(f"   Repository: {args.repo_id}")
-        exit(1)
+        sys.exit(1)
 
     # Download the data
     success = download_folder_from_hf(
@@ -296,7 +306,7 @@ Examples:
             print(f"   Data saved to: {target_dir}")
     else:
         print("❌ Download failed")
-        exit(1)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

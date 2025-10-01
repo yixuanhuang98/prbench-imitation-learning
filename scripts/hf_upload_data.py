@@ -9,20 +9,29 @@ Example usage:
     python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN
 
     # Upload with custom repository
-    python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN --repo_id your-org/your-dataset
+    python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN \\
+        --repo_id your-org/your-dataset
 
     # Dry run to see what would be uploaded
     python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN --dry_run
 
     # Upload to specific path in repository
-    python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN --remote_path data/experiments
+    python hf_upload_data.py /path/to/folder --hf_token YOUR_TOKEN \\
+        --remote_path data/experiments
 """
 
 import argparse
 import os
-import time
+import sys
 from pathlib import Path
 from typing import List
+
+try:
+    from huggingface_hub import HfApi
+    _HF_AVAILABLE = True
+except ImportError:
+    _HF_AVAILABLE = False
+    HfApi = None  # type: ignore
 
 # Repository configuration
 REPO_ID = "vaibhavsaxena11/prbench-data"  # Change this to your desired repo ID
@@ -62,7 +71,7 @@ def get_folder_files(folder_path: str) -> List[str]:
     if not os.path.exists(folder_path):
         return files
 
-    for root, dirs, filenames in os.walk(folder_path):
+    for root, _dirs, filenames in os.walk(folder_path):
         for filename in filenames:
             full_path = os.path.join(root, filename)
             relative_path = os.path.relpath(full_path, folder_path)
@@ -85,7 +94,7 @@ def calculate_folder_size(folder_path: str) -> int:
     if not os.path.exists(folder_path):
         return total_size
 
-    for root, dirs, files in os.walk(folder_path):
+    for root, _dirs, files in os.walk(folder_path):
         for file in files:
             filepath = os.path.join(root, file)
             try:
@@ -126,8 +135,14 @@ def upload_folder_to_hf(
     Returns:
         bool: True if successful, False otherwise
     """
+    if not _HF_AVAILABLE:
+        print(
+            "❌ Error: huggingface_hub not installed. "
+            "Install with: pip install huggingface_hub"
+        )
+        return False
+
     try:
-        from huggingface_hub import HfApi
 
         files = get_folder_files(local_path)
         size = calculate_folder_size(local_path)
@@ -168,21 +183,20 @@ def upload_folder_to_hf(
             commit_message=f"Upload {Path(local_path).name} to {remote_path}",
         )
 
-        print(f"✅ Successfully uploaded to https://huggingface.co/datasets/{repo_id}")
+        print(
+            f"✅ Successfully uploaded to "
+            f"https://huggingface.co/datasets/{repo_id}"
+        )
 
         return True
 
-    except ImportError:
-        print(
-            "❌ Error: huggingface_hub not installed. Install with: pip install huggingface_hub"
-        )
-        return False
     except Exception as e:
         print(f"❌ Error uploading to {remote_path}: {e}")
         return False
 
 
-def main():
+def main() -> None:
+    """Main function to handle command line arguments and execute upload."""
     parser = argparse.ArgumentParser(
         description="Upload a folder to HuggingFace datasets repository",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -246,18 +260,18 @@ Examples:
     # Validate arguments
     if not os.path.exists(args.folder_path):
         print(f"Error: Folder does not exist: {args.folder_path}")
-        exit(1)
+        sys.exit(1)
 
     if not os.path.isdir(args.folder_path):
         print(f"Error: Path is not a directory: {args.folder_path}")
-        exit(1)
+        sys.exit(1)
 
     if not args.dry_run and not validate_hf_token(args.hf_token) and not args.force:
         print("Error: Invalid or missing HuggingFace token.")
         print("Please provide a valid token with --hf_token")
         print("Get your token from: https://huggingface.co/settings/tokens")
         print("Use --force to bypass token validation (not recommended)")
-        exit(1)
+        sys.exit(1)
 
     # Set remote path - if not specified, use the folder name
     if not args.remote_path:
@@ -294,7 +308,7 @@ Examples:
             print("🎉 Upload completed successfully!")
     else:
         print("❌ Upload failed")
-        exit(1)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
