@@ -611,8 +611,8 @@ def train_behavior_cloning_policy(
         action_dim=action_dim,
         obs_horizon=config["obs_horizon"],
         action_horizon=config["action_horizon"],
-        hidden_dim=config.get("hidden_dim", 512),
-        num_layers=config.get("num_layers", 3),
+        hidden_dim=config.get("hidden_dim", 1024),
+        num_layers=config.get("num_layers", 5),
     ).to(device)
 
     log_message(f"Model parameters: {sum(p.numel() for p in model.parameters())}")

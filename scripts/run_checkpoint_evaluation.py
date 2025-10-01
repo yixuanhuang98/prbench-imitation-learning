@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Multi-checkpoint evaluation script.
 
-This script trains a policy while saving multiple checkpoints during training,
-then evaluates all checkpoints on a fixed set of test episodes to analyze
-performance evolution during training.
+This script trains a policy while saving multiple checkpoints during training, then
+evaluates all checkpoints on a fixed set of test episodes to analyze performance
+evolution during training.
 """
 
 import argparse
@@ -30,7 +30,11 @@ from prbench_imitation_learning import (
 
 # Import functions for different data types
 sys.path.insert(0, str(Path(__file__).parent))
-from run_diffusion_pipeline import collect_geom2d_demonstrations, load_precomputed_demonstrations, _parse_environment_name
+from run_diffusion_pipeline import (
+    _parse_environment_name,
+    collect_geom2d_demonstrations,
+    load_precomputed_demonstrations,
+)
 
 
 def train_policy_with_checkpoints(
@@ -42,7 +46,7 @@ def train_policy_with_checkpoints(
     checkpoint_interval: int = 5,
 ) -> List[str]:
     """Train policy with multiple checkpoints.
-    
+
     Args:
         dataset_path: Path to the dataset
         checkpoint_dir: Directory to save checkpoints
@@ -50,24 +54,32 @@ def train_policy_with_checkpoints(
         policy_type: Type of policy to train (behavior_cloning, custom, lerobot)
         log_dir: Directory to save logs
         checkpoint_interval: Save checkpoint every N epochs
-        
+
     Returns:
         List of checkpoint paths
     """
     import time
+
     import torch
     import torch.nn.functional as F
     from torch import optim
     from torch.optim.lr_scheduler import CosineAnnealingLR
     from torch.utils.data import DataLoader
-    from prbench_imitation_learning.policy import BehaviorCloningPolicy, DiffusionPolicy, DiffusionPolicyDataset
+
+    from prbench_imitation_learning.policy import (
+        BehaviorCloningPolicy,
+        DiffusionPolicy,
+        DiffusionPolicyDataset,
+    )
 
     # LeRobot imports (optional)
     try:
         from lerobot.configs.policies import FeatureType, PolicyFeature
         from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-        from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy as LeRobotDiffusionPolicy
+        from lerobot.policies.diffusion.modeling_diffusion import (
+            DiffusionPolicy as LeRobotDiffusionPolicy,)
         from torch.amp import GradScaler
+
         LEROBOT_AVAILABLE = True
     except ImportError:
         LEROBOT_AVAILABLE = False
@@ -136,15 +148,17 @@ def train_policy_with_checkpoints(
         ).to(device)
     elif policy_type == "lerobot":
         if not LEROBOT_AVAILABLE:
-            raise ImportError("LeRobot is not available. Please install it with: pip install lerobot")
-        
+            raise ImportError(
+                "LeRobot is not available. Please install it with: pip install lerobot"
+            )
+
         # Create LeRobot diffusion config
         obs_feature = PolicyFeature(
             name="observation.state",
             shape=[obs_dim],
             names=None,
         )
-        
+
         diffusion_config = DiffusionConfig(
             n_obs_steps=config["obs_horizon"],
             n_action_steps=config["action_horizon"],
@@ -153,7 +167,7 @@ def train_policy_with_checkpoints(
             input_normalization_modes={"observation.state": "mean_std"},
             output_normalization_modes={"action": "mean_std"},
         )
-        
+
         model = LeRobotDiffusionPolicy(diffusion_config).to(device)
     else:  # custom diffusion policy
         model = DiffusionPolicy(
@@ -168,12 +182,12 @@ def train_policy_with_checkpoints(
 
     # Setup optimizer and scheduler
     optimizer = optim.AdamW(
-        model.parameters(), 
+        model.parameters(),
         lr=config["learning_rate"],
         weight_decay=config.get("weight_decay", 1e-6),
     )
     scheduler = CosineAnnealingLR(optimizer, T_max=config["num_epochs"])
-    
+
     # Setup gradient scaler for LeRobot (if using mixed precision)
     scaler = None
     if policy_type == "lerobot" and config.get("use_mixed_precision", False):
@@ -217,12 +231,16 @@ def train_policy_with_checkpoints(
             if scaler:
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.get("grad_clip_norm", 1.0))
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.get("grad_clip_norm", 1.0)
+                )
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.get("grad_clip_norm", 1.0))
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.get("grad_clip_norm", 1.0)
+                )
                 optimizer.step()
 
             epoch_loss += loss.item()
@@ -247,15 +265,17 @@ def train_policy_with_checkpoints(
         # Save checkpoint at regular intervals
         if (epoch + 1) % checkpoint_interval == 0 or epoch == config["num_epochs"] - 1:
             checkpoint_path = checkpoint_dir_path / f"checkpoint_epoch_{epoch+1}.pth"
-            
+
             save_config = config.copy()
-            save_config.update({
-                "obs_dim": obs_dim,
-                "action_dim": action_dim,
-                "image_shape": list(dataset.image_shape),
-                "policy_type": policy_type,  # Use actual policy type
-            })
-            
+            save_config.update(
+                {
+                    "obs_dim": obs_dim,
+                    "action_dim": action_dim,
+                    "image_shape": list(dataset.image_shape),
+                    "policy_type": policy_type,  # Use actual policy type
+                }
+            )
+
             # Prepare checkpoint data
             checkpoint_data = {
                 "epoch": epoch,
@@ -264,19 +284,19 @@ def train_policy_with_checkpoints(
                 "loss": avg_loss,
                 "config": save_config,
             }
-            
+
             # Add LeRobot-specific config if needed
             if policy_type == "lerobot":
                 checkpoint_data["diffusion_config"] = model.config
-            
+
             torch.save(checkpoint_data, checkpoint_path)
-            
+
             checkpoint_paths.append(str(checkpoint_path))
             log_message(f"Checkpoint saved: {checkpoint_path}")
 
     log_message("Training completed!")
     log_message(f"Total checkpoints saved: {len(checkpoint_paths)}")
-    
+
     return checkpoint_paths
 
 
@@ -289,7 +309,7 @@ def evaluate_all_checkpoints(
     seed: int = 42,
 ) -> Dict[str, Any]:
     """Evaluate all checkpoints on the same set of test episodes.
-    
+
     Args:
         checkpoint_paths: List of checkpoint file paths
         env_id: Environment ID for evaluation
@@ -297,7 +317,7 @@ def evaluate_all_checkpoints(
         output_dir: Directory to save evaluation results
         log_dir: Directory for logs
         seed: Random seed for reproducible evaluation
-        
+
     Returns:
         Dictionary containing evaluation results for all checkpoints
     """
@@ -323,16 +343,18 @@ def evaluate_all_checkpoints(
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
     all_results = {}
-    
+
     for i, checkpoint_path in enumerate(checkpoint_paths):
         checkpoint_name = Path(checkpoint_path).stem
-        log_message(f"\nEvaluating checkpoint {i+1}/{len(checkpoint_paths)}: {checkpoint_name}")
-        
+        log_message(
+            f"\nEvaluating checkpoint {i+1}/{len(checkpoint_paths)}: {checkpoint_name}"
+        )
+
         try:
             # Create checkpoint-specific output directory
             checkpoint_output_dir = output_dir_path / checkpoint_name
             checkpoint_output_dir.mkdir(exist_ok=True)
-            
+
             # Evaluate this checkpoint
             results = evaluate_policy(
                 model_path=checkpoint_path,
@@ -344,13 +366,13 @@ def evaluate_all_checkpoints(
                 save_plots=True,
                 log_dir=str(log_dir),
                 max_episode_steps=400,
-                set_random_seed=True,
+                set_random_seed=False,
                 seed=seed,  # Use same seed for all evaluations
             )
-            
+
             # Extract epoch number from checkpoint name
             epoch_num = int(checkpoint_name.split("_")[-1])
-            
+
             # Store results
             all_results[checkpoint_name] = {
                 "epoch": epoch_num,
@@ -364,24 +386,26 @@ def evaluate_all_checkpoints(
                 "individual_lengths": results["episode_lengths"],
                 "individual_successes": results["success_rates"],
             }
-            
-            log_message(f"  Mean return: {results['mean_return']:.3f} ± {results['std_return']:.3f}")
+
+            log_message(
+                f"  Mean return: {results['mean_return']:.3f} ± {results['std_return']:.3f}"
+            )
             log_message(f"  Success rate: {results['success_rate']:.1%}")
             log_message(f"  Mean length: {results['mean_length']:.1f}")
-            
+
         except Exception as e:
             log_message(f"  Error evaluating {checkpoint_name}: {e}")
             continue
 
     log_message(f"\nCompleted evaluation of {len(all_results)} checkpoints")
-    
+
     # Save consolidated results
     results_file = output_dir_path / "all_checkpoint_results.json"
     with open(results_file, "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2)
-    
+
     log_message(f"Consolidated results saved to: {results_file}")
-    
+
     return all_results
 
 
@@ -391,7 +415,7 @@ def create_checkpoint_analysis_plots(
     show_plots: bool = False,
 ) -> None:
     """Create plots showing performance evolution across checkpoints.
-    
+
     Args:
         results: Dictionary containing evaluation results for all checkpoints
         save_dir: Directory to save plots
@@ -400,33 +424,37 @@ def create_checkpoint_analysis_plots(
     if not results:
         print("No results to plot!")
         return
-        
+
     # Convert results to DataFrame for easier plotting
     plot_data = []
     for checkpoint_name, checkpoint_results in results.items():
-        plot_data.append({
-            "checkpoint": checkpoint_name,
-            "epoch": checkpoint_results["epoch"],
-            "mean_return": checkpoint_results["mean_return"],
-            "std_return": checkpoint_results["std_return"],
-            "success_rate": checkpoint_results["success_rate"],
-            "mean_length": checkpoint_results["mean_length"],
-        })
-    
+        plot_data.append(
+            {
+                "checkpoint": checkpoint_name,
+                "epoch": checkpoint_results["epoch"],
+                "mean_return": checkpoint_results["mean_return"],
+                "std_return": checkpoint_results["std_return"],
+                "success_rate": checkpoint_results["success_rate"],
+                "mean_length": checkpoint_results["mean_length"],
+            }
+        )
+
     df = pd.DataFrame(plot_data)
     df = df.sort_values("epoch")
-    
+
     # Create figure with subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle("Policy Performance Evolution During Training", fontsize=16, fontweight="bold")
-    
+    fig.suptitle(
+        "Policy Performance Evolution During Training", fontsize=16, fontweight="bold"
+    )
+
     # Plot 1: Mean Return vs Epoch
     ax1.errorbar(
-        df["epoch"], 
-        df["mean_return"], 
+        df["epoch"],
+        df["mean_return"],
         yerr=df["std_return"],
-        fmt="bo-", 
-        linewidth=2, 
+        fmt="bo-",
+        linewidth=2,
         markersize=8,
         capsize=5,
     )
@@ -434,7 +462,7 @@ def create_checkpoint_analysis_plots(
     ax1.set_ylabel("Mean Return")
     ax1.set_title("Mean Return vs Training Progress")
     ax1.grid(True, alpha=0.3)
-    
+
     # Plot 2: Success Rate vs Epoch
     ax2.plot(df["epoch"], df["success_rate"] * 100, "ro-", linewidth=2, markersize=8)
     ax2.set_xlabel("Training Epoch")
@@ -442,39 +470,41 @@ def create_checkpoint_analysis_plots(
     ax2.set_title("Success Rate vs Training Progress")
     ax2.grid(True, alpha=0.3)
     ax2.set_ylim(-5, 105)
-    
+
     # Add value labels on success rate points
     for _, row in df.iterrows():
         ax2.annotate(
             f'{row["success_rate"]*100:.1f}%',
-            (row["epoch"], row["success_rate"]*100),
+            (row["epoch"], row["success_rate"] * 100),
             textcoords="offset points",
             xytext=(0, 10),
             ha="center",
             fontsize=8,
         )
-    
+
     # Plot 3: Mean Episode Length vs Epoch
     ax3.plot(df["epoch"], df["mean_length"], "go-", linewidth=2, markersize=8)
     ax3.set_xlabel("Training Epoch")
     ax3.set_ylabel("Mean Episode Length")
     ax3.set_title("Episode Length vs Training Progress")
     ax3.grid(True, alpha=0.3)
-    
+
     # Plot 4: Performance Summary Table
-    ax4.axis('tight')
-    ax4.axis('off')
-    
+    ax4.axis("tight")
+    ax4.axis("off")
+
     # Create table data
     table_data = []
     for _, row in df.iterrows():
-        table_data.append([
-            f"Epoch {row['epoch']}",
-            f"{row['mean_return']:.2f}",
-            f"{row['success_rate']*100:.1f}%",
-            f"{row['mean_length']:.1f}",
-        ])
-    
+        table_data.append(
+            [
+                f"Epoch {row['epoch']}",
+                f"{row['mean_return']:.2f}",
+                f"{row['success_rate']*100:.1f}%",
+                f"{row['mean_length']:.1f}",
+            ]
+        )
+
     table = ax4.table(
         cellText=table_data,
         colLabels=["Checkpoint", "Mean Return", "Success Rate", "Mean Length"],
@@ -485,40 +515,46 @@ def create_checkpoint_analysis_plots(
     table.set_fontsize(9)
     table.scale(1.2, 1.5)
     ax4.set_title("Performance Summary", fontweight="bold")
-    
+
     plt.tight_layout()
-    
+
     # Save plot
     save_dir_path = Path(save_dir)
     save_dir_path.mkdir(parents=True, exist_ok=True)
     plot_path = save_dir_path / "checkpoint_analysis.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
     print(f"Analysis plot saved to: {plot_path}")
-    
+
     if show_plots:
         plt.show()
     else:
         plt.close()
-    
+
     # Print summary statistics
     print("\n📊 CHECKPOINT ANALYSIS SUMMARY")
     print("=" * 60)
     print(f"{'Epoch':<8} {'Return':<12} {'Success Rate':<15} {'Episode Length':<15}")
     print("=" * 60)
-    
+
     for _, row in df.iterrows():
         print(
             f"{row['epoch']:<8} {row['mean_return']:<12.2f} "
             f"{row['success_rate']*100:<15.1f} {row['mean_length']:<15.1f}"
         )
-    
+
     # Find best performing checkpoint
     best_return_idx = df["mean_return"].idxmax()
     best_success_idx = df["success_rate"].idxmax()
-    
+
+    # Extract values explicitly for type safety
+    best_return_epoch = int(df.loc[best_return_idx, "epoch"])
+    best_return_value = float(df.loc[best_return_idx, "mean_return"])
+    best_success_epoch = int(df.loc[best_success_idx, "epoch"])
+    best_success_value = float(df.loc[best_success_idx, "success_rate"])
+
     print(f"\n🏆 BEST PERFORMANCE:")
-    print(f"Best Return: Epoch {df.loc[best_return_idx, 'epoch']} ({df.loc[best_return_idx, 'mean_return']:.3f})")
-    print(f"Best Success Rate: Epoch {df.loc[best_success_idx, 'epoch']} ({df.loc[best_success_idx, 'success_rate']*100:.1f}%)")
+    print(f"Best Return: Epoch {best_return_epoch} ({best_return_value:.3f})")
+    print(f"Best Success Rate: Epoch {best_success_epoch} ({best_success_value*100:.1f}%)")
 
 
 def main():
@@ -536,7 +572,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train policy with checkpoints and evaluate performance evolution"
     )
-    
+
     # Environment and data options
     parser.add_argument(
         "--env",
@@ -563,7 +599,7 @@ def main():
         type=str,
         help="Directory containing precomputed demonstrations (for data-type=precomputed)",
     )
-    
+
     # Expert demonstration specific options
     parser.add_argument(
         "--env-param",
@@ -593,7 +629,7 @@ def main():
         action="store_true",
         help="Use specific random seeds for environment resets (for reproducibility)",
     )
-    
+
     # Training options
     parser.add_argument(
         "--train-epochs",
@@ -626,7 +662,7 @@ def main():
         choices=["behavior_cloning", "custom", "lerobot"],
         help="Type of policy to train",
     )
-    
+
     # Evaluation options
     parser.add_argument(
         "--eval-episodes",
@@ -640,7 +676,7 @@ def main():
         default=42,
         help="Random seed for reproducible evaluation",
     )
-    
+
     # Pipeline control
     parser.add_argument(
         "--skip-data",
@@ -652,7 +688,7 @@ def main():
         type=str,
         help="Path to existing dataset (if skipping data generation)",
     )
-    
+
     # Output options
     parser.add_argument(
         "--output-dir",
@@ -676,7 +712,9 @@ def main():
     # Generate experiment name if not provided
     if not args.experiment_name:
         timestamp = time.strftime("%Y-%m-%d-%H%M%S")
-        args.experiment_name = f"checkpoint_exp_{args.env}_{args.policy_type}_{timestamp}"
+        args.experiment_name = (
+            f"checkpoint_exp_{args.env}_{args.policy_type}_{timestamp}"
+        )
 
     # Setup directories
     output_dir = Path(args.output_dir) / args.experiment_name
@@ -705,15 +743,15 @@ def main():
         if not args.skip_data:
             print(f"\n🔄 STEP 1: Generating {args.data_type} data for {args.env}")
             dataset_name = f"{args.env}_{args.data_type}_{args.data_episodes}ep"
-            
+
             if args.data_type == "expert":
                 # Use expert demonstration collection
                 env_type, env_param = _parse_environment_name(args.env)
-                
+
                 # Use env_param argument if provided, otherwise use parsed value
                 if args.env_param is not None:
                     env_param = args.env_param
-                
+
                 print("Using BilevelPlanningAgent for expert demonstrations")
                 dataset_path = collect_geom2d_demonstrations(
                     env_name=env_type,
@@ -721,7 +759,7 @@ def main():
                     num_episodes=args.data_episodes,
                     output_dir=str(dataset_dir / dataset_name),
                     max_steps_per_episode=1000,
-                    save_videos=False,
+                    save_videos=True,
                     max_abstract_plans=args.max_abstract_plans,
                     samples_per_step=args.samples_per_step,
                     planning_timeout=args.planning_timeout,
@@ -731,11 +769,15 @@ def main():
             elif args.data_type == "precomputed":
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
-                    raise ValueError("Must provide --precomputed-demos-dir when data-type=precomputed")
-                
-                print(f"Loading precomputed demonstrations from: {args.precomputed_demos_dir}")
+                    raise ValueError(
+                        "Must provide --precomputed-demos-dir when data-type=precomputed"
+                    )
+
+                print(
+                    f"Loading precomputed demonstrations from: {args.precomputed_demos_dir}"
+                )
                 dataset_name = f"{args.env}_precomputed"
-                
+
                 dataset_path = load_precomputed_demonstrations(
                     demos_dir=args.precomputed_demos_dir,
                     output_dir=str(dataset_dir),
@@ -752,25 +794,29 @@ def main():
                     log_dir=str(log_dir),
                     save_videos=False,
                 )
-            
+
             print(f"✅ Data generation completed: {dataset_path}")
         else:
             dataset_path = args.dataset_path
             if not dataset_path:
-                raise ValueError("Must provide --dataset-path when skipping data generation")
+                raise ValueError(
+                    "Must provide --dataset-path when skipping data generation"
+                )
             print(f"⏭️  Skipping data generation, using: {dataset_path}")
 
         # Step 2: Training with Checkpoints
         print(f"\n🔄 STEP 2: Training with checkpoints")
-        
+
         # Get default config and update with user settings
         train_config = get_default_training_config()
-        train_config.update({
-            "batch_size": args.batch_size,
-            "num_epochs": args.train_epochs,
-            "learning_rate": args.learning_rate,
-        })
-        
+        train_config.update(
+            {
+                "batch_size": args.batch_size,
+                "num_epochs": args.train_epochs,
+                "learning_rate": args.learning_rate,
+            }
+        )
+
         checkpoint_paths = train_policy_with_checkpoints(
             dataset_path=dataset_path,
             checkpoint_dir=str(checkpoint_dir),
@@ -779,19 +825,19 @@ def main():
             log_dir=str(log_dir),
             checkpoint_interval=args.checkpoint_interval,
         )
-        
+
         print(f"✅ Training completed with {len(checkpoint_paths)} checkpoints")
 
         # Step 3: Evaluate All Checkpoints
         print(f"\n🔄 STEP 3: Evaluating all checkpoints")
-        
+
         # Get environment ID
         try:
             available_envs = get_available_environments()
             env_id = available_envs.get(args.env, args.env)
         except:
             env_id = args.env
-        
+
         all_results = evaluate_all_checkpoints(
             checkpoint_paths=checkpoint_paths,
             env_id=env_id,
@@ -800,18 +846,18 @@ def main():
             log_dir=str(log_dir),
             seed=args.seed,
         )
-        
+
         print(f"✅ Evaluation completed for {len(all_results)} checkpoints")
 
         # Step 4: Create Analysis Plots
         print(f"\n🔄 STEP 4: Creating analysis plots")
-        
+
         create_checkpoint_analysis_plots(
             results=all_results,
             save_dir=str(output_dir / "analysis"),
             show_plots=args.show_plots,
         )
-        
+
         print(f"✅ Analysis plots created")
 
         # Save experiment summary
@@ -829,7 +875,7 @@ def main():
             "checkpoint_paths": checkpoint_paths,
             "completed_at": time.time(),
         }
-        
+
         summary_path = output_dir / "experiment_summary.json"
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
@@ -847,6 +893,7 @@ def main():
     except Exception as e:
         print(f"\n❌ EXPERIMENT FAILED: {str(e)}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
