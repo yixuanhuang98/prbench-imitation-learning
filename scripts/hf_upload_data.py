@@ -28,6 +28,7 @@ from typing import List
 
 try:
     from huggingface_hub import HfApi
+
     _HF_AVAILABLE = True
 except ImportError:
     _HF_AVAILABLE = False
@@ -184,8 +185,7 @@ def upload_folder_to_hf(
         )
 
         print(
-            f"✅ Successfully uploaded to "
-            f"https://huggingface.co/datasets/{repo_id}"
+            f"✅ Successfully uploaded to " f"https://huggingface.co/datasets/{repo_id}"
         )
 
         return True
