@@ -97,6 +97,29 @@ class PolicyEvaluator:
                 f"(epoch {checkpoint['epoch']}, "
                 f"loss: {checkpoint['loss']:.6f})"
             )
+        elif policy_type == "act":
+            if not LEROBOT_AVAILABLE:
+                raise ImportError(
+                    "LeRobot is not available but model was trained with "
+                    "ACT policy. Please install it with: pip install lerobot"
+                )
+
+            # pylint: disable=import-outside-toplevel
+            from lerobot.policies.act.modeling_act import ACTPolicy
+
+            # Load ACT config and stats
+            act_config = checkpoint["act_config"]
+            stats = checkpoint.get("stats", {})
+
+            # Create ACT model
+            model = ACTPolicy(act_config, dataset_stats=stats)
+
+            # Load state dict
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(self.device)
+            model.eval()
+
+            print("ACT model loaded successfully")
         elif policy_type == "lerobot":
             if not LEROBOT_AVAILABLE:
                 raise ImportError(
@@ -202,6 +225,49 @@ class PolicyEvaluator:
 
             # Return first action
             predicted_action = action_seq[0, 0].cpu().numpy()
+        elif policy_type == "act":
+            # ACT expects images and state (no temporal dimension)
+            # pylint: disable=import-outside-toplevel
+            import torchvision.transforms.functional as TF
+            
+            # Get state [1, state_dim]
+            obs_seq_tensor = (
+                torch.from_numpy(obs_state).float().unsqueeze(0).to(self.device)
+            )  # Shape: [1, state_dim]
+            
+            # Get image from observation dict if available
+            if obs_image is not None:
+                # Handle both (H, W, C) and (C, H, W) formats
+                if len(obs_image.shape) == 3:
+                    if obs_image.shape[2] == 3:  # (H, W, C)
+                        img_torch = torch.from_numpy(obs_image).permute(2, 0, 1).float() / 255.0
+                    elif obs_image.shape[0] == 3:  # (C, H, W)
+                        img_torch = torch.from_numpy(obs_image).float() / 255.0
+                    else:
+                        # Unknown format, create dummy
+                        img_torch = torch.zeros(3, 84, 84)
+                else:
+                    img_torch = torch.zeros(3, 84, 84)
+                    
+                # Resize to 84x84 (ACT config)
+                img_resized = TF.resize(img_torch, [84, 84])
+                img_tensor = img_resized.unsqueeze(0).to(self.device)  # [1, C, H, W]
+            else:
+                # Create a black image if no image available
+                img_tensor = torch.zeros(1, 3, 84, 84, device=self.device)
+
+            batch = {
+                "observation.image": img_tensor,
+                "observation.state": obs_seq_tensor,
+            }
+
+            # Predict action sequence using ACT
+            # Note: select_action doesn't need action_is_pad for inference
+            with torch.no_grad():
+                action_seq = self.model.select_action(batch)
+
+            # ACT returns action chunks, extract the first action
+            predicted_action = action_seq[0].cpu().numpy()
         elif policy_type == "lerobot":
             # LeRobot expects exactly n_obs_steps observations
             n_obs_steps = getattr(self.model, "diffusion", None)

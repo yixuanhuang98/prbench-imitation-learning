@@ -542,6 +542,338 @@ def get_default_training_config() -> Dict[str, Any]:
     }
 
 
+def train_act_policy(
+    dataset_path: str,
+    model_save_path: str,
+    config: Dict[str, Any],
+    log_dir: str = "./logs",
+):
+    """Train Action Chunking Transformer (ACT) policy from LeRobot.
+
+    Args:
+        dataset_path: Path to the dataset
+        model_save_path: Path to save the trained model
+        config: Training configuration
+        log_dir: Directory to save logs
+
+    Returns:
+        Trained ACT model
+    """
+    if not LEROBOT_AVAILABLE:
+        raise ImportError(
+            "LeRobot is not available. Please install it with: pip install lerobot"
+        )
+
+    # pylint: disable=import-outside-toplevel
+    from lerobot.policies.act.configuration_act import ACTConfig
+    from lerobot.policies.act.modeling_act import ACTPolicy
+
+    # Create log directory
+    log_dir_path = Path(log_dir)
+    log_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Set device
+    if config.get("force_cpu", False):
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Create dataset
+    dataset = DiffusionPolicyDataset(
+        dataset_path=dataset_path,
+        obs_horizon=config.get("obs_horizon", 1),  # ACT typically uses single obs
+        action_horizon=config.get("action_horizon", 100),  # ACT chunk size
+        pred_horizon=config.get("pred_horizon", 100),
+    )
+    print(f"Dataset loaded with {len(dataset)} sequences")
+
+    # Get dimensions
+    obs_state_shape = (dataset.obs_dim,)
+    action_shape = (dataset.action_dim,)
+
+    print(f"Observation state shape: {obs_state_shape}")
+    print(f"Action shape: {action_shape}")
+
+    # Create ACT config  
+    # ACT typically uses images + proprioceptive state
+    # Use images from dataset (C, H, W) format for LeRobot
+    image_c, image_h, image_w = 3, 84, 84  # Resize to smaller resolution
+    
+    input_features = {
+        "observation.image": PolicyFeature(
+            shape=[image_c, image_h, image_w], type=FeatureType.VISUAL
+        ),
+        "observation.state": PolicyFeature(
+            shape=list(obs_state_shape), type=FeatureType.STATE
+        ),
+    }
+
+    output_features = {
+        "action": PolicyFeature(shape=list(action_shape), type=FeatureType.ACTION),
+    }
+
+    act_config = ACTConfig()
+    act_config.input_features = input_features
+    act_config.output_features = output_features
+    act_config.n_obs_steps = config.get("obs_horizon", 1)
+    act_config.chunk_size = config.get("action_horizon", 100)
+    act_config.n_action_steps = config.get("action_horizon", 100)
+    act_config.optimizer_lr = config.get("learning_rate", 1e-5)
+    act_config.hidden_dim = config.get("hidden_dim", 512)
+    act_config.dim_feedforward = config.get("dim_feedforward", 3200)
+    act_config.num_encoder_layers = config.get("num_encoder_layers", 4)
+    act_config.num_decoder_layers = config.get("num_decoder_layers", 7)
+    act_config.crop_shape = None  # No cropping
+    act_config.image_size = (image_h, image_w)  # Target image size
+
+    # Compute dataset statistics for normalization
+    print("Computing dataset statistics for normalization...")
+    print(f"Processing images to {image_h}x{image_w} for statistics computation...")
+    stats = {}
+
+    # pylint: disable=import-outside-toplevel
+    import torchvision.transforms.functional as TF
+
+    all_states = []
+    all_actions = []
+    all_images_processed = []
+    
+    for i in range(len(dataset)):
+        sample = dataset[i]
+        all_states.extend(sample["obs_states"].flatten().tolist())
+        all_actions.extend(sample["actions"].flatten().tolist())
+        
+        # Process images for statistics
+        obs_images = sample["obs_images"]  # [obs_horizon, H, W, C]
+        for img in obs_images:
+            # Ensure img is numpy array
+            if isinstance(img, torch.Tensor):
+                img = img.cpu().numpy()
+            img = np.asarray(img)  # Ensure it's an array
+            
+            # Convert to torch format and process
+            # numpy (H, W, C) -> torch (C, H, W)
+            if len(img.shape) == 3 and img.shape[2] == 3:  # (H, W, C)
+                img_torch = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+            elif len(img.shape) == 3 and img.shape[0] == 3:  # Already (C, H, W)
+                img_torch = torch.from_numpy(img).float() / 255.0
+            else:
+                print(f"Warning: unexpected image shape {img.shape}, skipping")
+                continue
+                
+            # Resize to target size
+            img_resized = TF.resize(img_torch, [image_h, image_w])
+            all_images_processed.append(img_resized.numpy())  # Store as [C, H, W]
+        
+        if (i + 1) % 100 == 0:
+            print(f"  Processed {i + 1}/{len(dataset)} samples for statistics...")
+
+    all_states = np.array(all_states)
+    all_actions = np.array(all_actions)
+    
+    # Stack images carefully
+    if len(all_images_processed) > 0:
+        all_images_processed = np.stack(all_images_processed, axis=0)  # [N, C, H, W]
+        print(f"Stacked image array shape: {all_images_processed.shape}")
+    else:
+        raise ValueError("No images were processed for statistics!")
+
+    # Reshape to proper dimensions for computing statistics
+    all_states_reshaped = all_states.reshape(-1, obs_state_shape[0])
+    all_actions_reshaped = all_actions.reshape(-1, action_shape[0])
+
+    # Compute image statistics on resized images
+    # Shape: [C, H, W] - compute mean/std across all samples (axis=0)
+    print(f"Computing image statistics from {len(all_images_processed)} processed images...")
+    image_mean = np.mean(all_images_processed, axis=0).astype(np.float32)  # [C, H, W]
+    image_std = np.std(all_images_processed, axis=0).astype(np.float32) + 1e-8  # [C, H, W]
+    
+    stats["observation.image"] = {
+        "mean": image_mean,
+        "std": image_std,
+    }
+    
+    stats["observation.state"] = {
+        "mean": np.mean(all_states_reshaped, axis=0).astype(np.float32),
+        "std": (np.std(all_states_reshaped, axis=0).astype(np.float32) + 1e-8),
+    }
+    
+    stats["action"] = {
+        "mean": np.mean(all_actions_reshaped, axis=0).astype(np.float32),
+        "std": (np.std(all_actions_reshaped, axis=0).astype(np.float32) + 1e-8),
+    }
+    
+    print(f"Image statistics computed: mean shape {image_mean.shape}, std shape {image_std.shape}")
+
+    # Create model
+    model = ACTPolicy(act_config, dataset_stats=stats)
+    model = model.to(device)
+
+    # Setup optimizer
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config.get("learning_rate", 1e-5),
+        weight_decay=config.get("weight_decay", 1e-6),
+    )
+
+    # Create data loader
+    batch_size = config.get("batch_size", 8)
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, shuffle=True, num_workers=0
+    )
+
+    # Training loop
+    num_epochs = config.get("num_epochs", 100)
+    print(f"\nStarting ACT training for {num_epochs} epochs...")
+
+    model.train()
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        num_batches = 0
+
+        for batch_idx, batch in enumerate(dataloader):
+            obs_seq = batch["obs_states"].to(device)  # [B, obs_horizon, obs_dim]
+            action_seq = batch["actions"].to(device)  # [B, action_horizon, action_dim]
+            obs_images = batch["obs_images"]  # [B, obs_horizon, H, W, C]
+
+            # Prepare batch for ACT
+            # ACT expects: batch_size, timesteps, features
+            # Take only the first observation (ACT typically uses single observation)
+            obs_single = obs_seq[:, 0, :]  # [B, obs_dim]
+            
+            # Process images: [B, H, W, C] -> [B, C, H, W] and resize
+            img_single = obs_images[:, 0]  # [B, H, W, C]
+            
+            # Convert to torch and resize
+            import torchvision.transforms.functional as TF
+            img_processed = []
+            for idx, img in enumerate(img_single):
+                # Ensure img is numpy array
+                if isinstance(img, torch.Tensor):
+                    img = img.cpu().numpy()
+                img = np.asarray(img)
+                
+                # Debug first image
+                if idx == 0 and batch_idx == 0 and epoch == 0:
+                    print(f"Raw image shape before processing: {img.shape}")
+                
+                # Convert to torch format
+                # numpy (H, W, C) -> torch (C, H, W)
+                if len(img.shape) == 3 and img.shape[2] == 3:  # (H, W, C)
+                    img_torch = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
+                elif len(img.shape) == 3 and img.shape[0] == 3:  # Already (C, H, W)
+                    img_torch = torch.from_numpy(img).float() / 255.0
+                else:
+                    print(f"Error: unexpected image shape {img.shape}")
+                    # Create dummy image
+                    img_torch = torch.zeros(3, image_h, image_w)
+                    
+                # Resize to target size
+                img_resized = TF.resize(img_torch, [image_h, image_w])
+                
+                if idx == 0 and batch_idx == 0 and epoch == 0:
+                    print(f"Processed image shape: {img_resized.shape}")
+                    
+                img_processed.append(img_resized)
+            
+            img_tensor = torch.stack(img_processed).to(device)  # [B, C, H, W]
+            # Don't add temporal dimension - ACT handles it internally
+            # img_tensor shape: [B, C, H, W]
+            
+            # State also without temporal dimension
+            # obs_single shape: [B, obs_dim]
+
+            # Create action padding mask (all False since we have no padding)
+            action_is_pad = torch.zeros(
+                action_seq.shape[0], action_seq.shape[1], dtype=torch.bool, device=device
+            )  # [B, chunk_size]
+            
+            batch_act = {
+                "observation.image": img_tensor,  # [B, C, H, W]
+                "observation.state": obs_single,  # [B, obs_dim]
+                "action": action_seq,  # [B, chunk_size, action_dim]
+                "action_is_pad": action_is_pad,  # [B, chunk_size]
+            }
+
+            # Debug: Print shapes on first batch
+            if batch_idx == 0 and epoch == 0:
+                print(f"Batch shapes:")
+                print(f"  image: {img_tensor.shape}")
+                print(f"  state: {obs_single.shape}")
+                print(f"  action: {action_seq.shape}")
+
+            # Forward pass
+            output = model(batch_act)
+            
+            # Handle ACT output format
+            if isinstance(output, dict) and "loss" in output:
+                loss = output["loss"]
+            elif isinstance(output, tuple):
+                # ACT returns predictions during forward, compute loss ourselves
+                # For now, use simple MSE loss between predicted and actual actions
+                actions_pred = output[0] if len(output) > 0 else output
+                
+                # Ensure shapes match
+                if actions_pred.shape != action_seq.shape:
+                    print(f"Warning: shape mismatch - pred: {actions_pred.shape}, target: {action_seq.shape}")
+                    # Use only matching dimensions
+                    min_len = min(actions_pred.shape[1], action_seq.shape[1])
+                    actions_pred = actions_pred[:, :min_len, :]
+                    action_seq_trimmed = action_seq[:, :min_len, :]
+                    loss = torch.nn.functional.mse_loss(actions_pred, action_seq_trimmed)
+                else:
+                    loss = torch.nn.functional.mse_loss(actions_pred, action_seq)
+            else:
+                raise ValueError(f"Unexpected output format from ACT model: {type(output)}")
+
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), config.get("grad_clip_norm", 1.0)
+            )
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            num_batches += 1
+
+            if batch_idx % config.get("log_interval", 10) == 0:
+                print(
+                    f"Epoch {epoch+1}/{num_epochs}, "
+                    f"Batch {batch_idx+1}/{len(dataloader)}, "
+                    f"Loss: {loss.item():.6f}"
+                )
+
+        avg_loss = epoch_loss / num_batches
+        print(f"Epoch {epoch+1} completed. Average loss: {avg_loss:.6f}")
+
+    print("Training completed!")
+
+    # Save model
+    save_config = config.copy()
+    save_config.update(
+        {
+            "obs_dim": dataset.obs_dim,
+            "action_dim": dataset.action_dim,
+            "image_shape": list(dataset.image_shape),
+            "policy_type": "act",
+        }
+    )
+
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "config": save_config,
+        "act_config": model.config,
+        "stats": stats,
+    }
+
+    torch.save(checkpoint, model_save_path)
+    print(f"Model saved to: {model_save_path}")
+
+    return model
+
+
 def train_behavior_cloning_policy(
     dataset_path: str,
     model_save_path: str,

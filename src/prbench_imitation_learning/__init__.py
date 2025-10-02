@@ -14,6 +14,7 @@ from .policy import (
 )
 from .train import (
     get_default_training_config,
+    train_act_policy,
     train_behavior_cloning_policy,
     train_diffusion_policy,
     train_lerobot_diffusion_policy,
@@ -29,6 +30,7 @@ __all__ = [
     "train_diffusion_policy",
     "train_lerobot_diffusion_policy",
     "train_behavior_cloning_policy",
+    "train_act_policy",
     "get_default_training_config",
     # Evaluation
     "PolicyEvaluator",

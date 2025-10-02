@@ -21,6 +21,7 @@ from prbench_imitation_learning import (
     generate_lerobot_dataset,
     get_available_environments,
     get_default_training_config,
+    train_act_policy,
     train_behavior_cloning_policy,
     train_diffusion_policy,
     train_lerobot_diffusion_policy,
@@ -717,10 +718,10 @@ def main():
         "--policy-type",
         type=str,
         default="custom",
-        choices=["custom", "lerobot", "behavior_cloning"],
+        choices=["custom", "lerobot", "behavior_cloning", "act"],
         help=(
             "Type of policy to use (custom diffusion, LeRobot diffusion, "
-            "or behavior cloning)"
+            "behavior cloning, or ACT)"
         ),
     )
 
@@ -975,6 +976,13 @@ def main():
                 )
             elif args.policy_type == "behavior_cloning":
                 train_behavior_cloning_policy(
+                    dataset_path=dataset_path,
+                    model_save_path=model_path,
+                    config=train_config,
+                    log_dir=str(log_dir),
+                )
+            elif args.policy_type == "act":
+                train_act_policy(
                     dataset_path=dataset_path,
                     model_save_path=model_path,
                     config=train_config,
