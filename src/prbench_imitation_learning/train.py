@@ -567,6 +567,7 @@ def train_act_policy(
     # pylint: disable=import-outside-toplevel
     from lerobot.policies.act.configuration_act import ACTConfig
     from lerobot.policies.act.modeling_act import ACTPolicy
+    from prbench_imitation_learning.act_dataset import ACTDataset, collate_act_batch
 
     # Create log directory
     log_dir_path = Path(log_dir)
@@ -579,14 +580,16 @@ def train_act_policy(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Create dataset
-    dataset = DiffusionPolicyDataset(
+    # ACT-specific parameters
+    chunk_size = config.get("chunk_size", 8)  # ACT action chunk size
+    image_size = (84, 84)  # Resize images to this size
+    
+    # Create ACT-specific dataset
+    dataset = ACTDataset(
         dataset_path=dataset_path,
-        obs_horizon=config.get("obs_horizon", 1),  # ACT typically uses single obs
-        action_horizon=config.get("action_horizon", 100),  # ACT chunk size
-        pred_horizon=config.get("pred_horizon", 100),
+        chunk_size=chunk_size,
+        image_size=image_size,
     )
-    print(f"Dataset loaded with {len(dataset)} sequences")
 
     # Get dimensions
     obs_state_shape = (dataset.obs_dim,)
@@ -596,13 +599,15 @@ def train_act_policy(
     print(f"Action shape: {action_shape}")
 
     # Create ACT config  
-    # ACT typically uses images + proprioceptive state
-    # Use images from dataset (C, H, W) format for LeRobot
-    image_c, image_h, image_w = 3, 84, 84  # Resize to smaller resolution
-    
+    # ACT uses images + proprioceptive state
+    image_c, image_h, image_w = 3, image_size[0], image_size[1]
+
     input_features = {
-        "observation.image": PolicyFeature(
+        "observation.images": PolicyFeature(
             shape=[image_c, image_h, image_w], type=FeatureType.VISUAL
+        ),
+        "observation.environment_state": PolicyFeature(
+            shape=list(obs_state_shape), type=FeatureType.ENV
         ),
         "observation.state": PolicyFeature(
             shape=list(obs_state_shape), type=FeatureType.STATE
@@ -616,99 +621,81 @@ def train_act_policy(
     act_config = ACTConfig()
     act_config.input_features = input_features
     act_config.output_features = output_features
-    act_config.n_obs_steps = config.get("obs_horizon", 1)
-    act_config.chunk_size = config.get("action_horizon", 100)
-    act_config.n_action_steps = config.get("action_horizon", 100)
+    act_config.n_obs_steps = 1  # ACT uses single observation
+    act_config.chunk_size = chunk_size
+    act_config.n_action_steps = chunk_size
     act_config.optimizer_lr = config.get("learning_rate", 1e-5)
     act_config.hidden_dim = config.get("hidden_dim", 512)
     act_config.dim_feedforward = config.get("dim_feedforward", 3200)
     act_config.num_encoder_layers = config.get("num_encoder_layers", 4)
     act_config.num_decoder_layers = config.get("num_decoder_layers", 7)
     act_config.crop_shape = None  # No cropping
-    act_config.image_size = (image_h, image_w)  # Target image size
+    act_config.image_size = image_size  # Target image size
 
     # Compute dataset statistics for normalization
     print("Computing dataset statistics for normalization...")
-    print(f"Processing images to {image_h}x{image_w} for statistics computation...")
     stats = {}
-
-    # pylint: disable=import-outside-toplevel
-    import torchvision.transforms.functional as TF
 
     all_states = []
     all_actions = []
-    all_images_processed = []
+    all_images = []
     
+    # Collect data for statistics
+    print(f"Collecting statistics from {len(dataset)} samples...")
     for i in range(len(dataset)):
         sample = dataset[i]
-        all_states.extend(sample["obs_states"].flatten().tolist())
-        all_actions.extend(sample["actions"].flatten().tolist())
+        all_states.append(sample["obs_state"])
+        all_actions.extend(sample["actions"])  # Flatten action chunks
         
-        # Process images for statistics
-        obs_images = sample["obs_images"]  # [obs_horizon, H, W, C]
-        for img in obs_images:
-            # Ensure img is numpy array
-            if isinstance(img, torch.Tensor):
-                img = img.cpu().numpy()
-            img = np.asarray(img)  # Ensure it's an array
-            
-            # Convert to torch format and process
-            # numpy (H, W, C) -> torch (C, H, W)
-            if len(img.shape) == 3 and img.shape[2] == 3:  # (H, W, C)
-                img_torch = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-            elif len(img.shape) == 3 and img.shape[0] == 3:  # Already (C, H, W)
-                img_torch = torch.from_numpy(img).float() / 255.0
-            else:
-                print(f"Warning: unexpected image shape {img.shape}, skipping")
-                continue
-                
-            # Resize to target size
-            img_resized = TF.resize(img_torch, [image_h, image_w])
-            all_images_processed.append(img_resized.numpy())  # Store as [C, H, W]
+        if sample["obs_image"] is not None:
+            all_images.append(sample["obs_image"])
         
-        if (i + 1) % 100 == 0:
-            print(f"  Processed {i + 1}/{len(dataset)} samples for statistics...")
+        if (i + 1) % 500 == 0:
+            print(f"  Processed {i + 1}/{len(dataset)} samples...")
 
-    all_states = np.array(all_states)
-    all_actions = np.array(all_actions)
+    # Compute statistics
+    all_states = np.array(all_states)  # [N, obs_dim]
+    all_actions = np.array(all_actions)  # [N*chunk_size, action_dim]
     
-    # Stack images carefully
-    if len(all_images_processed) > 0:
-        all_images_processed = np.stack(all_images_processed, axis=0)  # [N, C, H, W]
-        print(f"Stacked image array shape: {all_images_processed.shape}")
-    else:
-        raise ValueError("No images were processed for statistics!")
-
-    # Reshape to proper dimensions for computing statistics
-    all_states_reshaped = all_states.reshape(-1, obs_state_shape[0])
-    all_actions_reshaped = all_actions.reshape(-1, action_shape[0])
-
-    # Compute image statistics on resized images
-    # Shape: [C, H, W] - compute mean/std across all samples (axis=0)
-    print(f"Computing image statistics from {len(all_images_processed)} processed images...")
-    image_mean = np.mean(all_images_processed, axis=0).astype(np.float32)  # [C, H, W]
-    image_std = np.std(all_images_processed, axis=0).astype(np.float32) + 1e-8  # [C, H, W]
-    
-    stats["observation.image"] = {
-        "mean": image_mean,
-        "std": image_std,
+    stats["observation.environment_state"] = {
+        "mean": np.mean(all_states, axis=0).astype(np.float32),
+        "std": (np.std(all_states, axis=0).astype(np.float32) + 1e-8),
     }
     
     stats["observation.state"] = {
-        "mean": np.mean(all_states_reshaped, axis=0).astype(np.float32),
-        "std": (np.std(all_states_reshaped, axis=0).astype(np.float32) + 1e-8),
+        "mean": np.mean(all_states, axis=0).astype(np.float32),
+        "std": (np.std(all_states, axis=0).astype(np.float32) + 1e-8),
     }
     
     stats["action"] = {
-        "mean": np.mean(all_actions_reshaped, axis=0).astype(np.float32),
-        "std": (np.std(all_actions_reshaped, axis=0).astype(np.float32) + 1e-8),
+        "mean": np.mean(all_actions, axis=0).astype(np.float32),
+        "std": (np.std(all_actions, axis=0).astype(np.float32) + 1e-8),
     }
     
-    print(f"Image statistics computed: mean shape {image_mean.shape}, std shape {image_std.shape}")
+    # Compute image statistics if available
+    if len(all_images) > 0:
+        all_images = np.array(all_images)  # [N, C, H, W]
+        image_mean = np.mean(all_images, axis=0).astype(np.float32)  # [C, H, W]
+        image_std = np.std(all_images, axis=0).astype(np.float32) + 1e-8  # [C, H, W]
+        stats["observation.images"] = {
+            "mean": image_mean,
+            "std": image_std,
+        }
+        print(f"Image statistics: mean shape {image_mean.shape}, std shape {image_std.shape}")
+    else:
+        # Dummy image stats
+        stats["observation.images"] = {
+            "mean": np.zeros((image_c, image_h, image_w), dtype=np.float32),
+            "std": np.ones((image_c, image_h, image_w), dtype=np.float32),
+        }
+        print("No images in dataset, using dummy image statistics")
+    
+    print(f"Statistics computed successfully")
 
     # Create model
     model = ACTPolicy(act_config, dataset_stats=stats)
     model = model.to(device)
+    model.train()  # Ensure model is in training mode
 
     # Setup optimizer
     optimizer = torch.optim.Adam(
@@ -717,10 +704,14 @@ def train_act_policy(
         weight_decay=config.get("weight_decay", 1e-6),
     )
 
-    # Create data loader
+    # Create data loader with ACT-specific collate function
     batch_size = config.get("batch_size", 8)
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, num_workers=0
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=collate_act_batch,  # ACT-specific batch formatting
     )
 
     # Training loop
@@ -732,100 +723,40 @@ def train_act_policy(
         epoch_loss = 0.0
         num_batches = 0
 
-        for batch_idx, batch in enumerate(dataloader):
-            obs_seq = batch["obs_states"].to(device)  # [B, obs_horizon, obs_dim]
-            action_seq = batch["actions"].to(device)  # [B, action_horizon, action_dim]
-            obs_images = batch["obs_images"]  # [B, obs_horizon, H, W, C]
-
-            # Prepare batch for ACT
-            # ACT expects: batch_size, timesteps, features
-            # Take only the first observation (ACT typically uses single observation)
-            obs_single = obs_seq[:, 0, :]  # [B, obs_dim]
-            
-            # Process images: [B, H, W, C] -> [B, C, H, W] and resize
-            img_single = obs_images[:, 0]  # [B, H, W, C]
-            
-            # Convert to torch and resize
-            import torchvision.transforms.functional as TF
-            img_processed = []
-            for idx, img in enumerate(img_single):
-                # Ensure img is numpy array
-                if isinstance(img, torch.Tensor):
-                    img = img.cpu().numpy()
-                img = np.asarray(img)
-                
-                # Debug first image
-                if idx == 0 and batch_idx == 0 and epoch == 0:
-                    print(f"Raw image shape before processing: {img.shape}")
-                
-                # Convert to torch format
-                # numpy (H, W, C) -> torch (C, H, W)
-                if len(img.shape) == 3 and img.shape[2] == 3:  # (H, W, C)
-                    img_torch = torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
-                elif len(img.shape) == 3 and img.shape[0] == 3:  # Already (C, H, W)
-                    img_torch = torch.from_numpy(img).float() / 255.0
-                else:
-                    print(f"Error: unexpected image shape {img.shape}")
-                    # Create dummy image
-                    img_torch = torch.zeros(3, image_h, image_w)
-                    
-                # Resize to target size
-                img_resized = TF.resize(img_torch, [image_h, image_w])
-                
-                if idx == 0 and batch_idx == 0 and epoch == 0:
-                    print(f"Processed image shape: {img_resized.shape}")
-                    
-                img_processed.append(img_resized)
-            
-            img_tensor = torch.stack(img_processed).to(device)  # [B, C, H, W]
-            # Don't add temporal dimension - ACT handles it internally
-            # img_tensor shape: [B, C, H, W]
-            
-            # State also without temporal dimension
-            # obs_single shape: [B, obs_dim]
-
-            # Create action padding mask (all False since we have no padding)
-            action_is_pad = torch.zeros(
-                action_seq.shape[0], action_seq.shape[1], dtype=torch.bool, device=device
-            )  # [B, chunk_size]
-            
-            batch_act = {
-                "observation.image": img_tensor,  # [B, C, H, W]
-                "observation.state": obs_single,  # [B, obs_dim]
-                "action": action_seq,  # [B, chunk_size, action_dim]
-                "action_is_pad": action_is_pad,  # [B, chunk_size]
-            }
+        for batch_idx, batch_act in enumerate(dataloader):
+            # Batch is already in ACT format from collate_act_batch
+            # Move to device
+            for key in batch_act:
+                batch_act[key] = batch_act[key].to(device)
 
             # Debug: Print shapes on first batch
             if batch_idx == 0 and epoch == 0:
-                print(f"Batch shapes:")
-                print(f"  image: {img_tensor.shape}")
-                print(f"  state: {obs_single.shape}")
-                print(f"  action: {action_seq.shape}")
+                print(f"Batch shapes (from collate_act_batch):")
+                for key, val in batch_act.items():
+                    print(f"  {key}: {val.shape}")
 
-            # Forward pass
-            output = model(batch_act)
+            # Get ground truth actions for loss computation
+            action_gt = batch_act["action"]  # [B, chunk_size, action_dim]
+
+            # Forward pass - call internal model to get gradients
+            # ACT's model.model() returns (actions_pred, (mu, log_sigma))
+            actions_hat, (mu_hat, log_sigma_x2_hat) = model.model(batch_act)
             
-            # Handle ACT output format
-            if isinstance(output, dict) and "loss" in output:
-                loss = output["loss"]
-            elif isinstance(output, tuple):
-                # ACT returns predictions during forward, compute loss ourselves
-                # For now, use simple MSE loss between predicted and actual actions
-                actions_pred = output[0] if len(output) > 0 else output
-                
-                # Ensure shapes match
-                if actions_pred.shape != action_seq.shape:
-                    print(f"Warning: shape mismatch - pred: {actions_pred.shape}, target: {action_seq.shape}")
-                    # Use only matching dimensions
-                    min_len = min(actions_pred.shape[1], action_seq.shape[1])
-                    actions_pred = actions_pred[:, :min_len, :]
-                    action_seq_trimmed = action_seq[:, :min_len, :]
-                    loss = torch.nn.functional.mse_loss(actions_pred, action_seq_trimmed)
-                else:
-                    loss = torch.nn.functional.mse_loss(actions_pred, action_seq)
-            else:
-                raise ValueError(f"Unexpected output format from ACT model: {type(output)}")
+            # Manually compute loss with gradients
+            # L1 loss for action prediction
+            l1_loss = torch.nn.functional.l1_loss(actions_hat, action_gt)
+            
+            # KL divergence loss for VAE
+            kld_loss = torch.mean(
+                mu_hat.pow(2) + log_sigma_x2_hat.exp() - log_sigma_x2_hat - 1
+            ) * 0.5
+            
+            # Combine losses (ACT typically uses l1 + kld)
+            loss = l1_loss + kld_loss
+            
+            if batch_idx == 0 and epoch == 0:
+                print(f"  Loss: {loss.item():.6f} (l1: {l1_loss.item():.6f}, kld: {kld_loss.item():.6f})")
+                print(f"  Loss requires_grad: {loss.requires_grad}")
 
             # Backward pass
             optimizer.zero_grad()
@@ -856,7 +787,8 @@ def train_act_policy(
         {
             "obs_dim": dataset.obs_dim,
             "action_dim": dataset.action_dim,
-            "image_shape": list(dataset.image_shape),
+            "image_size": list(dataset.image_size),
+            "chunk_size": chunk_size,
             "policy_type": "act",
         }
     )

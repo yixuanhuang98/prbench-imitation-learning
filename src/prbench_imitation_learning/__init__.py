@@ -19,6 +19,7 @@ from .train import (
     train_diffusion_policy,
     train_lerobot_diffusion_policy,
 )
+from .act_dataset import ACTDataset, collate_act_batch
 
 __all__ = [
     # Policy models
@@ -26,6 +27,9 @@ __all__ = [
     "DiffusionPolicyDataset",
     "BehaviorCloningPolicy",
     "ConditionalUNet1D",
+    # ACT specific
+    "ACTDataset",
+    "collate_act_batch",
     # Training
     "train_diffusion_policy",
     "train_lerobot_diffusion_policy",
