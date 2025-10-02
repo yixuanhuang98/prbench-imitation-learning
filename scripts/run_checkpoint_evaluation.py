@@ -8,19 +8,19 @@ evolution during training.
 
 import argparse
 import json
-import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 # Add src to path to import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# pylint: disable=wrong-import-position,wrong-import-order
 from prbench_imitation_learning import (
     evaluate_policy,
     generate_lerobot_dataset,
@@ -35,6 +35,8 @@ from run_diffusion_pipeline import (
     collect_geom2d_demonstrations,
     load_precomputed_demonstrations,
 )
+
+# pylint: enable=wrong-import-position,wrong-import-order
 
 
 def train_policy_with_checkpoints(
@@ -58,8 +60,7 @@ def train_policy_with_checkpoints(
     Returns:
         List of checkpoint paths
     """
-    import time
-
+    # pylint: disable=import-outside-toplevel
     import torch
     import torch.nn.functional as F
     from torch import optim
@@ -74,15 +75,20 @@ def train_policy_with_checkpoints(
 
     # LeRobot imports (optional)
     try:
-        from lerobot.configs.policies import FeatureType, PolicyFeature
         from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+
+        # isort: off
         from lerobot.policies.diffusion.modeling_diffusion import (
-            DiffusionPolicy as LeRobotDiffusionPolicy,)
+            DiffusionPolicy as LeRobotDiffusionPolicy,
+        )
+
+        # isort: on
         from torch.amp import GradScaler
 
         LEROBOT_AVAILABLE = True
     except ImportError:
         LEROBOT_AVAILABLE = False
+    # pylint: enable=import-outside-toplevel
 
     # Setup logging
     log_dir_path = Path(log_dir)
@@ -143,8 +149,8 @@ def train_policy_with_checkpoints(
             action_dim=action_dim,
             obs_horizon=config["obs_horizon"],
             action_horizon=config["action_horizon"],
-            hidden_dim=config.get("hidden_dim", 512),
-            num_layers=config.get("num_layers", 3),
+            hidden_dim=config.get("hidden_dim", 1024),
+            num_layers=config.get("num_layers", 5),
         ).to(device)
     elif policy_type == "lerobot":
         if not LEROBOT_AVAILABLE:
@@ -153,12 +159,7 @@ def train_policy_with_checkpoints(
             )
 
         # Create LeRobot diffusion config
-        obs_feature = PolicyFeature(
-            name="observation.state",
-            shape=[obs_dim],
-            names=None,
-        )
-
+        # pylint: disable=unexpected-keyword-arg,no-value-for-parameter
         diffusion_config = DiffusionConfig(
             n_obs_steps=config["obs_horizon"],
             n_action_steps=config["action_horizon"],
@@ -167,6 +168,7 @@ def train_policy_with_checkpoints(
             input_normalization_modes={"observation.state": "mean_std"},
             output_normalization_modes={"action": "mean_std"},
         )
+        # pylint: enable=unexpected-keyword-arg,no-value-for-parameter
 
         model = LeRobotDiffusionPolicy(diffusion_config).to(device)
     else:  # custom diffusion policy
@@ -388,7 +390,8 @@ def evaluate_all_checkpoints(
             }
 
             log_message(
-                f"  Mean return: {results['mean_return']:.3f} ± {results['std_return']:.3f}"
+                f"  Mean return: {results['mean_return']:.3f} ± "
+                f"{results['std_return']:.3f}"
             )
             log_message(f"  Success rate: {results['success_rate']:.1%}")
             log_message(f"  Mean length: {results['mean_length']:.1f}")
@@ -532,7 +535,7 @@ def create_checkpoint_analysis_plots(
 
     # Print summary statistics
     print("\n📊 CHECKPOINT ANALYSIS SUMMARY")
-    print("=" * 60)
+    print("=" * 60)  # noqa: E501
     print(f"{'Epoch':<8} {'Return':<12} {'Success Rate':<15} {'Episode Length':<15}")
     print("=" * 60)
 
@@ -552,9 +555,11 @@ def create_checkpoint_analysis_plots(
     best_success_epoch = int(df.loc[best_success_idx, "epoch"])
     best_success_value = float(df.loc[best_success_idx, "success_rate"])
 
-    print(f"\n🏆 BEST PERFORMANCE:")
+    print("\n🏆 BEST PERFORMANCE:")
     print(f"Best Return: Epoch {best_return_epoch} ({best_return_value:.3f})")
-    print(f"Best Success Rate: Epoch {best_success_epoch} ({best_success_value*100:.1f}%)")
+    print(
+        f"Best Success Rate: Epoch {best_success_epoch} ({best_success_value*100:.1f}%)"
+    )
 
 
 def main():
@@ -579,7 +584,10 @@ def main():
         type=str,
         default=default_env,
         choices=env_choices,
-        help=f"Environment name. Available: {', '.join(env_choices[:5])}{'...' if len(env_choices) > 5 else ''}",
+        help=(
+            f"Environment name. Available: {', '.join(env_choices[:5])}"
+            f"{'...' if len(env_choices) > 5 else ''}"
+        ),
     )
     parser.add_argument(
         "--data-episodes",
@@ -597,7 +605,10 @@ def main():
     parser.add_argument(
         "--precomputed-demos-dir",
         type=str,
-        help="Directory containing precomputed demonstrations (for data-type=precomputed)",
+        help=(
+            "Directory containing precomputed demonstrations "
+            "(for data-type=precomputed)"
+        ),
     )
 
     # Expert demonstration specific options
@@ -610,24 +621,34 @@ def main():
         "--max-abstract-plans",
         type=int,
         default=10,
-        help="Maximum abstract plans for BilevelPlanningAgent (only for expert data)",
+        help=(
+            "Maximum abstract plans for BilevelPlanningAgent " "(only for expert data)"
+        ),
     )
     parser.add_argument(
         "--samples-per-step",
         type=int,
         default=3,
-        help="Samples per planning step for BilevelPlanningAgent (only for expert data)",
+        help=(
+            "Samples per planning step for BilevelPlanningAgent "
+            "(only for expert data)"
+        ),
     )
     parser.add_argument(
         "--planning-timeout",
         type=float,
         default=30.0,
-        help="Planning timeout in seconds for BilevelPlanningAgent (only for expert data)",
+        help=(
+            "Planning timeout in seconds for BilevelPlanningAgent "
+            "(only for expert data)"
+        ),
     )
     parser.add_argument(
         "--set-random-seed",
         action="store_true",
-        help="Use specific random seeds for environment resets (for reproducibility)",
+        help=(
+            "Use specific random seeds for environment resets " "(for reproducibility)"
+        ),
     )
 
     # Training options
@@ -688,6 +709,25 @@ def main():
         type=str,
         help="Path to existing dataset (if skipping data generation)",
     )
+    parser.add_argument(
+        "--skip-training",
+        action="store_true",
+        help="Skip training (use existing checkpoints)",
+    )
+    parser.add_argument(
+        "--checkpoint-paths",
+        type=str,
+        nargs="+",
+        help="Paths to existing checkpoint files (if skipping training)",
+    )
+    parser.add_argument(
+        "--checkpoint-dir-path",
+        type=str,
+        help=(
+            "Path to directory containing checkpoints (if skipping training). "
+            "Will use all .pth files found."
+        ),
+    )
 
     # Output options
     parser.add_argument(
@@ -730,10 +770,27 @@ def main():
     print("=" * 60)
     print(f"Experiment: {args.experiment_name}")
     print(f"Environment: {args.env}")
-    print(f"Data type: {args.data_type}")
-    print(f"Policy type: {args.policy_type}")
-    print(f"Training epochs: {args.train_epochs}")
-    print(f"Checkpoint interval: {args.checkpoint_interval}")
+
+    if args.skip_data:
+        print(f"Data generation: SKIPPED (using: {args.dataset_path})")
+    else:
+        print(f"Data type: {args.data_type}")
+        print(f"Data episodes: {args.data_episodes}")
+
+    if args.skip_training:
+        if args.checkpoint_paths:
+            num_cp = len(args.checkpoint_paths)
+            print(f"Training: SKIPPED (using {num_cp} provided checkpoints)")
+        elif args.checkpoint_dir_path:
+            print(
+                f"Training: SKIPPED (loading checkpoints from: "
+                f"{args.checkpoint_dir_path})"
+            )
+    else:
+        print(f"Policy type: {args.policy_type}")
+        print(f"Training epochs: {args.train_epochs}")
+        print(f"Checkpoint interval: {args.checkpoint_interval}")
+
     print(f"Evaluation episodes: {args.eval_episodes}")
     print(f"Output directory: {output_dir}")
     print("=" * 60)
@@ -770,11 +827,13 @@ def main():
                 # Use precomputed demonstrations
                 if not args.precomputed_demos_dir:
                     raise ValueError(
-                        "Must provide --precomputed-demos-dir when data-type=precomputed"
+                        "Must provide --precomputed-demos-dir when "
+                        "data-type=precomputed"
                     )
 
                 print(
-                    f"Loading precomputed demonstrations from: {args.precomputed_demos_dir}"
+                    f"Loading precomputed demonstrations from: "
+                    f"{args.precomputed_demos_dir}"
                 )
                 dataset_name = f"{args.env}_precomputed"
 
@@ -805,37 +864,75 @@ def main():
             print(f"⏭️  Skipping data generation, using: {dataset_path}")
 
         # Step 2: Training with Checkpoints
-        print(f"\n🔄 STEP 2: Training with checkpoints")
+        if not args.skip_training:
+            print("\n🔄 STEP 2: Training with checkpoints")
 
-        # Get default config and update with user settings
-        train_config = get_default_training_config()
-        train_config.update(
-            {
-                "batch_size": args.batch_size,
-                "num_epochs": args.train_epochs,
-                "learning_rate": args.learning_rate,
-            }
-        )
+            # Get default config and update with user settings
+            train_config = get_default_training_config()
+            train_config.update(
+                {
+                    "batch_size": args.batch_size,
+                    "num_epochs": args.train_epochs,
+                    "learning_rate": args.learning_rate,
+                }
+            )
 
-        checkpoint_paths = train_policy_with_checkpoints(
-            dataset_path=dataset_path,
-            checkpoint_dir=str(checkpoint_dir),
-            config=train_config,
-            policy_type=args.policy_type,
-            log_dir=str(log_dir),
-            checkpoint_interval=args.checkpoint_interval,
-        )
+            checkpoint_paths = train_policy_with_checkpoints(
+                dataset_path=dataset_path,
+                checkpoint_dir=str(checkpoint_dir),
+                config=train_config,
+                policy_type=args.policy_type,
+                log_dir=str(log_dir),
+                checkpoint_interval=args.checkpoint_interval,
+            )
 
-        print(f"✅ Training completed with {len(checkpoint_paths)} checkpoints")
+            print(f"✅ Training completed with {len(checkpoint_paths)} checkpoints")
+        else:
+            # Load existing checkpoints
+            if args.checkpoint_paths:
+                checkpoint_paths = args.checkpoint_paths
+                num_files = len(checkpoint_paths)
+                print(
+                    f"⏭️  Skipping training, using provided checkpoints: "
+                    f"{num_files} files"
+                )
+            elif args.checkpoint_dir_path:
+                # Find all .pth files in the directory
+                checkpoint_dir_provided = Path(args.checkpoint_dir_path)
+                if not checkpoint_dir_provided.exists():
+                    raise ValueError(
+                        f"Checkpoint directory does not exist: "
+                        f"{args.checkpoint_dir_path}"
+                    )
+
+                checkpoint_files = sorted(checkpoint_dir_provided.glob("*.pth"))
+                checkpoint_paths = [str(f) for f in checkpoint_files]
+
+                if not checkpoint_paths:
+                    raise ValueError(
+                        f"No checkpoint files (.pth) found in: "
+                        f"{args.checkpoint_dir_path}"
+                    )
+
+                num_cp = len(checkpoint_paths)
+                print(
+                    f"⏭️  Skipping training, found {num_cp} checkpoints in: "
+                    f"{args.checkpoint_dir_path}"
+                )
+            else:
+                raise ValueError(
+                    "Must provide either --checkpoint-paths or "
+                    "--checkpoint-dir-path when skipping training"
+                )
 
         # Step 3: Evaluate All Checkpoints
-        print(f"\n🔄 STEP 3: Evaluating all checkpoints")
+        print("\n🔄 STEP 3: Evaluating all checkpoints")
 
         # Get environment ID
         try:
             available_envs = get_available_environments()
             env_id = available_envs.get(args.env, args.env)
-        except:
+        except Exception:  # pylint: disable=broad-except
             env_id = args.env
 
         all_results = evaluate_all_checkpoints(
@@ -850,7 +947,7 @@ def main():
         print(f"✅ Evaluation completed for {len(all_results)} checkpoints")
 
         # Step 4: Create Analysis Plots
-        print(f"\n🔄 STEP 4: Creating analysis plots")
+        print("\n🔄 STEP 4: Creating analysis plots")
 
         create_checkpoint_analysis_plots(
             results=all_results,
@@ -858,7 +955,7 @@ def main():
             show_plots=args.show_plots,
         )
 
-        print(f"✅ Analysis plots created")
+        print("✅ Analysis plots created")
 
         # Save experiment summary
         summary = {
@@ -892,8 +989,6 @@ def main():
 
     except Exception as e:
         print(f"\n❌ EXPERIMENT FAILED: {str(e)}")
-        import traceback
-
         traceback.print_exc()
         sys.exit(1)
 

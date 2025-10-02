@@ -9,16 +9,20 @@ import argparse
 import json
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict
 
 # Add src to path to import our modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# pylint: disable=wrong-import-position
 from prbench_imitation_learning import (
     evaluate_policy,
     get_available_environments,
 )
+
+# pylint: enable=wrong-import-position
 
 
 def evaluate_single_checkpoint(
@@ -59,8 +63,11 @@ def evaluate_single_checkpoint(
     if output_dir is None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         checkpoint_name = checkpoint_path.stem
-        # Use diffusion_pipeline_results directory to match existing structure
-        output_dir = f"diffusion_pipeline_results/single_checkpoint_eval_{checkpoint_name}_{timestamp}"
+        # Use diffusion_pipeline_results directory
+        output_dir = (
+            f"diffusion_pipeline_results/"
+            f"single_checkpoint_eval_{checkpoint_name}_{timestamp}"
+        )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +153,10 @@ def main():
         type=str,
         default=default_env,
         choices=env_choices,
-        help=f"Environment name. Available: {', '.join(env_choices[:5])}{'...' if len(env_choices) > 5 else ''}",
+        help=(
+            f"Environment name. Available: {', '.join(env_choices[:5])}"
+            f"{'...' if len(env_choices) > 5 else ''}"
+        ),
     )
 
     # Evaluation options
@@ -178,7 +188,10 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        help="Output directory for results (auto-generated in diffusion_pipeline_results/ if not provided)",
+        help=(
+            "Output directory for results (auto-generated in "
+            "diffusion_pipeline_results/ if not provided)"
+        ),
     )
     parser.add_argument(
         "--render",
@@ -203,11 +216,11 @@ def main():
         try:
             available_envs = get_available_environments()
             env_id = available_envs.get(args.env, args.env)
-        except:
+        except Exception:  # pylint: disable=broad-except
             env_id = args.env
 
         # Evaluate the checkpoint
-        results = evaluate_single_checkpoint(
+        evaluate_single_checkpoint(
             checkpoint_path=args.checkpoint_path,
             env_id=env_id,
             num_episodes=args.eval_episodes,
@@ -224,8 +237,6 @@ def main():
 
     except Exception as e:
         print(f"\n❌ EVALUATION FAILED: {str(e)}")
-        import traceback
-
         traceback.print_exc()
         sys.exit(1)
 
