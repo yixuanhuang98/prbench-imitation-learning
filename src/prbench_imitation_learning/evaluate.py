@@ -180,6 +180,11 @@ class PolicyEvaluator:
             obs_state = observation
             obs_image = None
 
+        # Handle dimension mismatch (e.g., PushT environment has 5D obs but dataset has 2D)
+        if hasattr(self.model, 'obs_dim') and len(obs_state) > self.model.obs_dim:
+            # Trim observation to match model's expected dimensions
+            obs_state = obs_state[:self.model.obs_dim]
+
         self.obs_history.append(obs_state)
 
         # If we don't have enough history, pad with the current observation
@@ -404,6 +409,13 @@ class PolicyEvaluator:
         # Setup environment
         try:
             prbench.register_all_environments()
+
+            # Register gym_pusht if needed
+            if "gym_pusht" in env_id or "pusht" in env_id.lower():
+                try:
+                    import gym_pusht  # pylint: disable=import-outside-toplevel,unused-import
+                except ImportError:
+                    print("Warning: gym_pusht not installed. Install with: pip install gym-pusht")
 
             # If saving videos, we need to enable rendering
             render_mode = "rgb_array" if save_videos else None

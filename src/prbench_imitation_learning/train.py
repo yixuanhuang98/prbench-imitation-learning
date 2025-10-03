@@ -70,6 +70,7 @@ def train_diffusion_policy(
         obs_horizon=config["obs_horizon"],
         action_horizon=config["action_horizon"],
         pred_horizon=config["pred_horizon"],
+        video_backend=config.get("video_backend", "pyav"),
     )
 
     dataloader = DataLoader(
@@ -250,6 +251,7 @@ def train_lerobot_diffusion_policy(
         obs_horizon=config.get("obs_horizon", 2),
         action_horizon=config.get("action_horizon", 8),
         pred_horizon=config.get("pred_horizon", 8),
+        video_backend=config.get("video_backend", "pyav"),
     )
     print(f"Dataset loaded with {len(dataset)} sequences")
 
@@ -588,6 +590,7 @@ def train_behavior_cloning_policy(
         obs_horizon=config["obs_horizon"],
         action_horizon=config["action_horizon"],
         pred_horizon=config["pred_horizon"],
+        video_backend=config.get("video_backend", "pyav"),
     )
 
     # Create data loader

@@ -24,6 +24,7 @@ class DiffusionPolicyDataset(Dataset):
         obs_horizon: int = 2,
         action_horizon: int = 8,
         pred_horizon: int = 8,
+        video_backend: str = "pyav",
     ):
         """
         Args:
@@ -31,11 +32,13 @@ class DiffusionPolicyDataset(Dataset):
             obs_horizon: Number of observation frames to use as context
             action_horizon: Number of action frames to predict
             pred_horizon: Number of future action steps to predict
+            video_backend: Video backend for LeRobot datasets ("pyav" or "torchcodec")
         """
         self.dataset_path = Path(dataset_path)
         self.obs_horizon = obs_horizon
         self.action_horizon = action_horizon
         self.pred_horizon = pred_horizon
+        self.video_backend = video_backend
 
         # Try to load as LeRobot dataset first, fallback to pickle
         print(f"Loading dataset from {dataset_path}")
@@ -53,7 +56,7 @@ class DiffusionPolicyDataset(Dataset):
         else:
             # Try LeRobot format
             try:
-                self.dataset = LeRobotDataset(dataset_path)
+                self.dataset = LeRobotDataset(dataset_path, video_backend=video_backend)
                 print(f"Dataset loaded with {len(self.dataset)} frames")
             except Exception as e:
                 print(f"Failed to load LeRobot dataset: {e}")
@@ -86,13 +89,38 @@ class DiffusionPolicyDataset(Dataset):
 
     def _group_by_episodes(self):
         """Group dataset frames by episode."""
-        episodes = {}
-        for i in range(len(self.dataset)):
-            episode_idx = self.dataset[i]["episode_index"]
-            if episode_idx not in episodes:
-                episodes[episode_idx] = []
-            episodes[episode_idx].append(i)
-        return episodes
+        # Check if this is a LeRobotDataset
+        if hasattr(self.dataset, 'episode_data_index') and hasattr(self.dataset, 'hf_dataset'):
+            # Use the underlying HuggingFace dataset directly to get ALL episodes
+            # LeRobot's episode_data_index may filter episodes based on video availability
+            print("Grouping episodes from HuggingFace dataset (bypassing LeRobot filtering)...")
+            episodes = {}
+            for i in range(len(self.dataset.hf_dataset)):
+                episode_idx = int(self.dataset.hf_dataset[i]["episode_index"])
+                if episode_idx not in episodes:
+                    episodes[episode_idx] = []
+                episodes[episode_idx].append(i)
+            print(f"Found {len(episodes)} episodes from HuggingFace dataset")
+            return episodes
+        elif hasattr(self.dataset, 'episode_data_index'):
+            # Use LeRobot's native episode structure as fallback
+            episodes = {}
+            for ep_idx in range(len(self.dataset.episode_data_index)):
+                start_idx = int(self.dataset.episode_data_index['from'][ep_idx])
+                end_idx = int(self.dataset.episode_data_index['to'][ep_idx])
+                episodes[ep_idx] = list(range(start_idx, end_idx))
+            return episodes
+        else:
+            # Fallback for non-LeRobot datasets
+            episodes = {}
+            for i in range(len(self.dataset)):
+                episode_idx = self.dataset[i]["episode_index"]
+                if isinstance(episode_idx, torch.Tensor):
+                    episode_idx = int(episode_idx.item())
+                if episode_idx not in episodes:
+                    episodes[episode_idx] = []
+                episodes[episode_idx].append(i)
+            return episodes
 
     def _group_episodes_from_pickle(self):
         """Group pickle data frames by episode."""
@@ -158,12 +186,19 @@ class DiffusionPolicyDataset(Dataset):
                 frame = self.episodes_data[frame_idx]
             actions.append(frame["action"])
 
-        # Convert to tensors
-        obs_states = torch.stack([torch.from_numpy(obs) for obs in obs_states])
-        obs_images = torch.stack(
-            [torch.from_numpy(img).permute(2, 0, 1) / 255.0 for img in obs_images]
-        )
-        actions = torch.stack([torch.from_numpy(action) for action in actions])
+        # Convert to tensors (handle both numpy arrays and torch tensors)
+        def to_tensor(x):
+            if isinstance(x, torch.Tensor):
+                return x
+            return torch.from_numpy(x)
+        
+        obs_states = torch.stack([to_tensor(obs) for obs in obs_states])
+        obs_images = torch.stack([
+            (to_tensor(img).permute(2, 0, 1) if len(img.shape) == 3 and not isinstance(img, torch.Tensor)
+             else to_tensor(img)) / 255.0
+            for img in obs_images
+        ])
+        actions = torch.stack([to_tensor(action) for action in actions])
 
         return {
             "obs_states": obs_states.float(),
