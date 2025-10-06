@@ -266,11 +266,11 @@ def train_lerobot_diffusion_policy(
         print(f"Image shape: {image_shape}")
 
     # Create LeRobot diffusion config with proper input/output features
-    # Use separate robot state (1) and environment state (obs_dim)
+    # Use actual robot state from observations (obs_dim), environment state empty
     input_features = {
-        "observation.state": PolicyFeature(shape=[1], type=FeatureType.STATE),
+        "observation.state": PolicyFeature(shape=list(obs_state_shape), type=FeatureType.STATE),
         "observation.environment_state": PolicyFeature(
-            shape=list(obs_state_shape), type=FeatureType.ENV
+            shape=[0], type=FeatureType.ENV
         ),
     }
     # if image_shape is not None:
@@ -293,10 +293,10 @@ def train_lerobot_diffusion_policy(
     diffusion_config.n_action_steps = config.get("pred_horizon", 8)
     diffusion_config.num_train_timesteps = config.get("num_diffusion_iters", 100)
     diffusion_config.optimizer_lr = config.get("learning_rate", 1e-4)
-    # Align conditioning dim used in LeRobot residual FiLM blocks with eval path
-    # Set timestep embedding so that
-    # cond_dim = timestep_embed(=248) + global_cond(=120) = 368
-    diffusion_config.diffusion_step_embed_dim = 248
+    # Configure timestep embedding dimension for conditioning
+    # For PushT: global_cond = obs_state_dim * n_obs_steps = 2 * 2 = 4
+    # Total cond_dim = timestep_embed + global_cond
+    diffusion_config.diffusion_step_embed_dim = 128
 
     # Disable cropping since we're not using images for now
     diffusion_config.crop_shape = None
@@ -328,19 +328,19 @@ def train_lerobot_diffusion_policy(
         "std": max(np.std(all_actions), 1e-8),  # Avoid zero std
     }
 
-    # Format stats for LeRobot
+    # Format stats for LeRobot - use actual state statistics for observation.state
     stats = {
         "observation.state": {
-            "min": torch.tensor([0.0]).float(),
-            "max": torch.tensor([1.0]).float(),
-            "mean": torch.tensor([0.5]).float(),
-            "std": torch.tensor([0.5]).float(),
-        },
-        "observation.environment_state": {
             "min": torch.tensor([state_stats["min"]] * obs_state_shape[0]).float(),
             "max": torch.tensor([state_stats["max"]] * obs_state_shape[0]).float(),
             "mean": torch.tensor([state_stats["mean"]] * obs_state_shape[0]).float(),
             "std": torch.tensor([state_stats["std"]] * obs_state_shape[0]).float(),
+        },
+        "observation.environment_state": {
+            "min": torch.tensor([]).float(),
+            "max": torch.tensor([]).float(),
+            "mean": torch.tensor([]).float(),
+            "std": torch.tensor([]).float(),
         },
         "action": {
             "min": torch.tensor([action_stats["min"]] * action_shape[0]).float(),
@@ -368,7 +368,9 @@ def train_lerobot_diffusion_policy(
     )
 
     # Create scheduler
-    total_steps = config["num_epochs"] * (len(dataset) // config["batch_size"])
+    # Calculate total steps, ensuring at least 1 step per epoch to avoid division by zero
+    steps_per_epoch = max(1, len(dataset) // config["batch_size"])
+    total_steps = config["num_epochs"] * steps_per_epoch
     lr_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps)
 
     # Create dataloader
@@ -419,16 +421,20 @@ def train_lerobot_diffusion_policy(
             actions = batch["actions"].to(device)
             batch_size, action_horizon = actions.shape[:2]
 
-            # Separate features: dummy robot state and environment state
-            dummy_robot_state = (
-                torch.ones(batch_size, config.get("obs_horizon", 2), 1, device=device)
-                * 0.5
+            # Use actual robot state from observations instead of dummy values
+            # For PushT, obs_states contains the agent position which is the robot state
+            robot_state = obs_states  # Shape: [batch, obs_horizon, state_dim]
+            
+            # Create environment state as empty tensor since we're using robot state
+            # This maintains compatibility with the dual-feature setup
+            env_state = torch.zeros(
+                batch_size, config.get("obs_horizon", 2), 0, device=device
             )
 
             lerobot_batch = {
-                "observation.state": dummy_robot_state,  # Shape: [batch, obs_horizon, 1]
-                # [batch, obs_horizon, state_dim]
-                "observation.environment_state": obs_states,
+                "observation.state": robot_state,  # Shape: [batch, obs_horizon, state_dim]
+                # Empty environment state to maintain feature structure
+                "observation.environment_state": env_state,
                 "action": actions,  # Shape: [batch, action_horizon, action_dim]
                 "action_is_pad": torch.zeros(
                     batch_size, action_horizon, dtype=torch.bool, device=device

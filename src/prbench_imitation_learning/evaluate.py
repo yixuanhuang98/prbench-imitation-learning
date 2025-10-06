@@ -232,15 +232,15 @@ class PolicyEvaluator:
                 .to(self.device)
             )  # Shape: [1, n_obs_steps, state_dim]
 
-            # Separate features to match training: dummy robot state and
-            # environment state
-            dummy_robot_state = (
-                torch.ones(1, len(self.obs_history), 1, device=self.device) * 0.5
-            )
+            # Use actual robot state from observations (matches training setup)
+            robot_state = obs_states  # Shape: [1, n_obs_steps, state_dim]
+            
+            # Empty environment state to match training setup
+            env_state = torch.zeros(1, len(history_list), 0, device=self.device)
 
             batch = {
-                "observation.state": dummy_robot_state,
-                "observation.environment_state": obs_states,
+                "observation.state": robot_state,
+                "observation.environment_state": env_state,
             }
 
             if obs_image is not None:
@@ -273,19 +273,8 @@ class PolicyEvaluator:
                     )
                     n_steps = cfg.n_obs_steps  # type: ignore
                     step_embed = cfg.diffusion_step_embed_dim  # type: ignore
-                    print(
-                        f"[LeRobot Eval] robot_dim={robot_dim}, "
-                        f"env_dim={env_dim}, n_obs_steps={n_steps}"
-                    )
-                    print(
-                        f"[LeRobot Eval] batch state shape: "
-                        f"{batch['observation.state'].shape}"
-                    )
-                    if "observation.environment_state" in batch:
-                        print(
-                            f"[LeRobot Eval] batch env shape: "
-                            f"{batch['observation.environment_state'].shape}"
-                        )
+                    
+                    
                     # Compute expected cond dim
                     expected_global = (robot_dim + env_dim) * n_steps
                     expected_cond = step_embed + expected_global
@@ -301,34 +290,16 @@ class PolicyEvaluator:
                         dim=-1,
                     )
                     gc_flat = gc.flatten(start_dim=1)
-                    print(
-                        f"[LeRobot Eval] step_embed={step_embed}, "
-                        f"expected_global={expected_global}, "
-                        f"expected_cond={expected_cond}"
-                    )
-                    print(
-                        f"[LeRobot Eval] gc_flat shape={tuple(gc_flat.shape)}, "
-                        f"size={gc_flat.shape[-1]}"
-                    )
+                    
                     # Ask model to build the actual global_cond and print shape
                     # pylint: disable=protected-access
                     true_gc = self.model.diffusion._prepare_global_conditioning(batch)  # type: ignore # pylint: disable=line-too-long
-                    print(
-                        f"[LeRobot Eval] true global_cond "
-                        f"shape={tuple(true_gc.shape)}, "
-                        f"size={true_gc.shape[-1]}"
-                    )
                     # And the final cond that will be used inside the first
                     # residual block
                     t_embed = self.model.diffusion.unet.diffusion_step_encoder(  # type: ignore # pylint: disable=line-too-long
                         torch.zeros(1, dtype=torch.long, device=self.device)
                     )
                     final_cond = torch.cat([t_embed, true_gc], dim=-1)
-                    print(
-                        f"[LeRobot Eval] final cond "
-                        f"shape={tuple(final_cond.shape)}, "
-                        f"size={final_cond.shape[-1]}"
-                    )
                 except Exception:
                     pass
                 # Use select_action method for inference
