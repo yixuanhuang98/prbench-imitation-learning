@@ -972,6 +972,7 @@ def main():
                     model_save_path=model_path,
                     config=train_config,
                     log_dir=str(log_dir),
+                    use_original_lerobot_params=True,  # Use original LeRobot parameters for better performance
                 )
             elif args.policy_type == "behavior_cloning":
                 train_behavior_cloning_policy(

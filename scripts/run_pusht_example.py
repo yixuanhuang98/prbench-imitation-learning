@@ -214,6 +214,7 @@ def main():
                         model_save_path=str(model_path),
                         config=train_config,
                         log_dir=str(log_dir / policy_type),
+                        use_original_lerobot_params=True,  # Use original LeRobot parameters for better performance
                     )
                 else:  # behavior_cloning
                     train_behavior_cloning_policy(

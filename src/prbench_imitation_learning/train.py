@@ -217,6 +217,7 @@ def train_lerobot_diffusion_policy(
     model_save_path: str,
     config: Dict[str, Any],
     log_dir: str = "./logs",
+    use_original_lerobot_params: bool = True,
 ) -> LeRobotDiffusionPolicy:
     """Train LeRobot diffusion policy on the dataset.
 
@@ -368,20 +369,29 @@ def train_lerobot_diffusion_policy(
     model = LeRobotDiffusionPolicy(diffusion_config, dataset_stats=stats).to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Create optimizer and scheduler manually (LeRobot factory needs different config)
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=config.get("learning_rate", 1e-4),
-        betas=diffusion_config.optimizer_betas,
-        eps=diffusion_config.optimizer_eps,
-        weight_decay=diffusion_config.optimizer_weight_decay,
-    )
+    if use_original_lerobot_params:
+        # Use original LeRobot parameters: Adam optimizer, no weight decay, no complex scheduling
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=config.get("learning_rate", 1e-4),
+        )
+        lr_scheduler = None  # No learning rate scheduling
+        print("Using original LeRobot training parameters")
+    else:
+        # Use improved parameters: AdamW with weight decay and cosine scheduling
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=config.get("learning_rate", 1e-4),
+            betas=diffusion_config.optimizer_betas,
+            eps=diffusion_config.optimizer_eps,
+            weight_decay=diffusion_config.optimizer_weight_decay,
+        )
 
-    # Create scheduler
-    # Calculate total steps, ensuring at least 1 step per epoch to avoid division by zero
-    steps_per_epoch = max(1, len(dataset) // config["batch_size"])
-    total_steps = config["num_epochs"] * steps_per_epoch
-    lr_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps)
+        # Create scheduler
+        # Calculate total steps, ensuring at least 1 step per epoch to avoid division by zero
+        steps_per_epoch = max(1, len(dataset) // config["batch_size"])
+        total_steps = config["num_epochs"] * steps_per_epoch
+        lr_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps)
 
     # Create dataloader
     dataloader = DataLoader(
@@ -421,11 +431,24 @@ def train_lerobot_diffusion_policy(
     best_loss = float("inf")
     grad_scaler = GradScaler()
 
+    if use_original_lerobot_params:
+        # Use original LeRobot approach: train for a fixed number of steps
+        training_steps = min(config.get("training_steps", 5000), config["num_epochs"] * len(dataloader))
+        print(f"Training for {training_steps} steps using original LeRobot approach")
+    else:
+        # Use epoch-based training
+        training_steps = config["num_epochs"] * len(dataloader)
+
+    step = 0
     for epoch in range(config["num_epochs"]):
         epoch_loss = 0.0
         num_batches = 0
 
         for batch_idx, batch in enumerate(dataloader):
+            # Check if we've reached the step limit for original LeRobot approach
+            if use_original_lerobot_params and step >= training_steps:
+                break
+
             # Convert our custom batch format to LeRobot format
             obs_states = batch["obs_states"].to(device)
             actions = batch["actions"].to(device)
@@ -434,7 +457,7 @@ def train_lerobot_diffusion_policy(
             # Use actual robot state from observations instead of dummy values
             # For PushT, obs_states contains the agent position which is the robot state
             robot_state = obs_states  # Shape: [batch, obs_horizon, state_dim]
-            
+
             # Create environment state as empty tensor since we're using robot state
             # This maintains compatibility with the dual-feature setup
             env_state = torch.zeros(
@@ -459,37 +482,54 @@ def train_lerobot_diffusion_policy(
             # Forward pass through LeRobot policy
             loss, _ = model.forward(lerobot_batch)
 
-            # Backward pass
-            optimizer.zero_grad()
-            grad_scaler.scale(loss).backward()
+            # Backward pass - simplified for original LeRobot approach
+            if use_original_lerobot_params:
+                # Use simple backward pass like original LeRobot script
+                optimizer.zero_grad()
+                loss.backward()
 
-            # Gradient clipping
-            grad_scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(
-                model.parameters(), config.get("grad_clip_norm", 1.0)
-            )
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.get("grad_clip_norm", 1.0)
+                )
 
-            grad_scaler.step(optimizer)
-            grad_scaler.update()
+                optimizer.step()
+            else:
+                # Use gradient scaling for improved stability
+                optimizer.zero_grad()
+                grad_scaler.scale(loss).backward()
+
+                # Gradient clipping
+                grad_scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.get("grad_clip_norm", 1.0)
+                )
+
+                grad_scaler.step(optimizer)
+                grad_scaler.update()
 
             if lr_scheduler is not None:
                 lr_scheduler.step()
 
             epoch_loss += loss.item()
             num_batches += 1
+            step += 1
 
             # Log progress
             if batch_idx % config.get("log_interval", 10) == 0:
-                msg = (
-                    f"Epoch {epoch+1}/{config['num_epochs']}, "
-                    f"Batch {batch_idx+1}/{len(dataloader)}, "
-                    f"Loss: {loss.item():.6f}"
-                )
+                if use_original_lerobot_params:
+                    msg = f"Step {step}/{training_steps}, Loss: {loss.item():.6f}"
+                else:
+                    msg = (
+                        f"Epoch {epoch+1}/{config['num_epochs']}, "
+                        f"Batch {batch_idx+1}/{len(dataloader)}, "
+                        f"Loss: {loss.item():.6f}"
+                    )
                 log_message(msg)
 
                 if config.get("use_wandb", False):
                     wandb.log(
-                        {"batch_loss": loss.item(), "epoch": epoch, "batch": batch_idx}
+                        {"batch_loss": loss.item(), "epoch": epoch, "batch": batch_idx, "step": step}
                     )
 
         # End of epoch
@@ -552,13 +592,14 @@ def get_default_training_config() -> Dict[str, Any]:
         "action_horizon": 8,
         "pred_horizon": 8,
         "num_diffusion_iters": 100,
-        "batch_size": 32,
+        "batch_size": 64,  # Increased to match original LeRobot script
         "num_epochs": 50,
+        "training_steps": 5000,  # Match original LeRobot script
         "learning_rate": 1e-4,
         "weight_decay": 1e-6,
         "grad_clip_norm": 1.0,
         "num_workers": 4,
-        "log_interval": 10,
+        "log_interval": 1,  # More frequent logging like original script
         "use_wandb": False,
         "force_cpu": False,
     }
