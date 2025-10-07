@@ -273,12 +273,12 @@ def train_lerobot_diffusion_policy(
             shape=[0], type=FeatureType.ENV
         ),
     }
-    # if image_shape is not None:
-    #     # Convert from (H, W, C) to (C, H, W) format for LeRobot
-    #     lerobot_image_shape = [image_shape[2], image_shape[0],
-    #                           image_shape[1]]  # (C, H, W)
-    #     input_features["observation.image"] = PolicyFeature(
-    #         shape=lerobot_image_shape, type=FeatureType.VISUAL)
+    if image_shape is not None:
+        # Dataset already provides images in (C, H, W) format
+        # Convert torch.Size to list if needed
+        lerobot_image_shape = list(image_shape) if hasattr(image_shape, '__iter__') else [image_shape]
+        input_features["observation.image"] = PolicyFeature(
+            shape=lerobot_image_shape, type=FeatureType.VISUAL)
 
     output_features = {
         "action": PolicyFeature(shape=list(action_shape), type=FeatureType.ACTION),
@@ -350,7 +350,17 @@ def train_lerobot_diffusion_policy(
         },
     }
 
-    # Skip image stats for now since we're only using state observations
+    # Add image stats if images are present
+    if image_shape is not None:
+        # Images are normalized to [0, 1], so use standard stats
+        # Shape should be (C, H, W) - same as lerobot_image_shape
+        C, H, W = lerobot_image_shape
+        stats["observation.image"] = {
+            "min": torch.zeros(C, H, W).float(),
+            "max": torch.ones(C, H, W).float(),
+            "mean": torch.ones(C, H, W).float() * 0.5,
+            "std": torch.ones(C, H, W).float() * 0.5,
+        }
 
     print("Dataset statistics computed.")
 
@@ -441,7 +451,10 @@ def train_lerobot_diffusion_policy(
                 ),  # No padding
             }
 
-            # Skip images for now - only using state observations
+            # Add images if available
+            if "obs_images" in batch:
+                obs_images = batch["obs_images"].to(device)  # Shape: [batch, obs_horizon, C, H, W]
+                lerobot_batch["observation.image"] = obs_images
 
             # Forward pass through LeRobot policy
             loss, _ = model.forward(lerobot_batch)
@@ -518,6 +531,7 @@ def train_lerobot_diffusion_policy(
                     "loss": avg_loss,
                     "config": save_config,
                     "diffusion_config": diffusion_config,
+                    "dataset_stats": stats,  # Save normalization stats for proper model loading
                 },
                 model_save_path,
             )

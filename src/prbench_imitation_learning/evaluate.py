@@ -56,6 +56,7 @@ class PolicyEvaluator:
 
         # Setup observation history buffer
         self.obs_history = deque(maxlen=self.config["obs_horizon"])
+        self.image_history = deque(maxlen=self.config["obs_horizon"])
 
     def _load_model(self) -> Tuple[DiffusionPolicy, Dict[str, Any]]:
         """Load the trained model from checkpoint."""
@@ -104,11 +105,12 @@ class PolicyEvaluator:
                     "LeRobot policy. Please install it with: pip install lerobot"
                 )
 
-            # Load LeRobot diffusion config
+            # Load LeRobot diffusion config and dataset stats
             diffusion_config = checkpoint["diffusion_config"]
+            dataset_stats = checkpoint.get("dataset_stats", None)
 
-            # Create LeRobot model
-            model = LeRobotDiffusionPolicy(diffusion_config)
+            # Create LeRobot model with stats for proper normalization
+            model = LeRobotDiffusionPolicy(diffusion_config, dataset_stats=dataset_stats)
 
             # Load state dict
             model.load_state_dict(checkpoint["model_state_dict"])
@@ -184,12 +186,24 @@ class PolicyEvaluator:
         if hasattr(self.model, 'obs_dim') and len(obs_state) > self.model.obs_dim:
             # Trim observation to match model's expected dimensions
             obs_state = obs_state[:self.model.obs_dim]
+        elif self.config.get("policy_type") == "lerobot" and self.config.get("obs_dim") and len(obs_state) > self.config["obs_dim"]:
+            # Also handle for LeRobot models using config
+            obs_state = obs_state[:self.config["obs_dim"]]
 
         self.obs_history.append(obs_state)
+        
+        # Also append image to history if available
+        if obs_image is not None:
+            self.image_history.append(obs_image)
 
         # If we don't have enough history, pad with the current observation
         while len(self.obs_history) < self.config["obs_horizon"]:
             self.obs_history.append(obs_state)
+        
+        # Pad image history if needed
+        if obs_image is not None:
+            while len(self.image_history) < self.config["obs_horizon"]:
+                self.image_history.append(obs_image)
 
         # Check policy type
         policy_type = self.config.get("policy_type", "custom")
@@ -243,17 +257,23 @@ class PolicyEvaluator:
                 "observation.environment_state": env_state,
             }
 
-            if obs_image is not None:
-                # Add image observations if available
-                # (convert to channel-first format)
-                image_tensor = (
-                    torch.from_numpy(obs_image)
-                    .float()
-                    .permute(2, 0, 1)
-                    .unsqueeze(0)
-                    .unsqueeze(0)
-                    .to(self.device)
-                )
+            if obs_image is not None and len(self.image_history) > 0:
+                # Add image observations history if available
+                # Convert image history to tensor [1, n_obs_steps, C, H, W]
+                image_list = list(self.image_history)[-n_obs_steps:]
+                # Ensure we have exactly n_obs_steps images
+                while len(image_list) < n_obs_steps:
+                    image_list = [image_list[0]] + image_list
+                
+                images = []
+                for img in image_list:
+                    if len(img.shape) == 3:  # H, W, C format
+                        img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0
+                    else:  # Already C, H, W
+                        img_tensor = torch.from_numpy(img).float() / 255.0
+                    images.append(img_tensor)
+                
+                image_tensor = torch.stack(images).unsqueeze(0).to(self.device)
                 batch["observation.image"] = image_tensor
 
             # Predict action sequence using LeRobot policy
@@ -342,6 +362,7 @@ class PolicyEvaluator:
     def reset(self):
         """Reset the observation history."""
         self.obs_history.clear()
+        self.image_history.clear()
 
     def evaluate_policy(
         self,
@@ -388,8 +409,9 @@ class PolicyEvaluator:
                 except ImportError:
                     print("Warning: gym_pusht not installed. Install with: pip install gym-pusht")
 
-            # If saving videos, we need to enable rendering
-            render_mode = "rgb_array" if save_videos else None
+            # Enable rendering if saving videos or if model uses images
+            needs_rendering = save_videos or (self.config.get("policy_type") == "lerobot" and self.config.get("image_shape") is not None)
+            render_mode = "rgb_array" if needs_rendering else None
             env = gym.make(env_id, render_mode=render_mode)
         except Exception as e:
             print(f"Failed to create environment {env_id}: {e}")
@@ -432,8 +454,19 @@ class PolicyEvaluator:
 
             done = False
             while not done and episode_length < max_episode_steps:
+                # Get image observation if the model needs it
+                obs_dict = obs
+                if self.config.get("policy_type") == "lerobot" and hasattr(self.config, "image_shape"):
+                    # Get image from environment render
+                    try:
+                        image = env.render()
+                        if image is not None:
+                            obs_dict = {"state": obs, "image": image}
+                    except Exception:
+                        obs_dict = obs
+                
                 # Get action from policy
-                action = self.predict_action(obs)
+                action = self.predict_action(obs_dict)
 
                 # Clip action to valid action space
                 if hasattr(env.action_space, "low") and hasattr(
