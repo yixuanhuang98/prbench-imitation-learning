@@ -222,58 +222,41 @@ class PolicyEvaluator:
             # Return first action
             predicted_action = action_seq[0, 0].cpu().numpy()
         elif policy_type == "lerobot":
-            # LeRobot expects exactly n_obs_steps observations
-            n_obs_steps = getattr(self.model, "diffusion", None)
-            n_obs_steps = (
-                n_obs_steps.config.n_obs_steps
-                if n_obs_steps is not None
-                else self.config.get("obs_horizon", 2)
-            )
-
-            history_list = list(self.obs_history)
-            if len(history_list) == 0:
-                history_list = [obs_state]
-            # Pad or trim to exactly n_obs_steps (pad with first element)
-            if len(history_list) < n_obs_steps:
-                pad_needed = n_obs_steps - len(history_list)
-                history_list = [history_list[0]] * pad_needed + history_list
-            elif len(history_list) > n_obs_steps:
-                history_list = history_list[-n_obs_steps:]
-
-            obs_states = (
-                torch.stack([torch.from_numpy(obs).float() for obs in history_list])
-                .unsqueeze(0)
-                .to(self.device)
-            )  # Shape: [1, n_obs_steps, state_dim]
+            # LeRobot's select_action expects a SINGLE timestep WITHOUT time dimension
+            # The queue system will handle the time dimension
+            # Convert current observation to tensor [batch_size, state_dim]
+            obs_state_tensor = (
+                torch.from_numpy(obs_state).float().unsqueeze(0).to(self.device)
+            )  # Shape: [1, state_dim]
 
             # Use actual robot state from observations (matches training setup)
-            robot_state = obs_states  # Shape: [1, n_obs_steps, state_dim]
+            robot_state = obs_state_tensor  # Shape: [1, state_dim]
             
             # Empty environment state to match training setup
-            env_state = torch.zeros(1, len(history_list), 0, device=self.device)
+            env_state = torch.zeros(1, 0, device=self.device)
 
             batch = {
                 "observation.state": robot_state,
                 "observation.environment_state": env_state,
             }
 
-            if obs_image is not None and len(self.image_history) > 0:
-                # Add image observations history if available
-                # Convert image history to tensor [1, n_obs_steps, C, H, W]
-                image_list = list(self.image_history)[-n_obs_steps:]
-                # Ensure we have exactly n_obs_steps images
-                while len(image_list) < n_obs_steps:
-                    image_list = [image_list[0]] + image_list
+            # Check if model expects images (was trained with images)
+            if self.config.get("image_shape") is not None and obs_image is not None:
+                # Model was trained with images, provide single timestep image
+                C, H_expected, W_expected = self.config["image_shape"]
                 
-                images = []
-                for img in image_list:
-                    if len(img.shape) == 3:  # H, W, C format
-                        img_tensor = torch.from_numpy(img).float().permute(2, 0, 1) / 255.0
-                    else:  # Already C, H, W
-                        img_tensor = torch.from_numpy(img).float() / 255.0
-                    images.append(img_tensor)
+                if len(obs_image.shape) == 3:  # H, W, C format
+                    img_tensor = torch.from_numpy(obs_image).float().permute(2, 0, 1) / 255.0
+                else:  # Already C, H, W
+                    img_tensor = torch.from_numpy(obs_image).float() / 255.0
                 
-                image_tensor = torch.stack(images).unsqueeze(0).to(self.device)
+                # Resize if needed to match expected dimensions
+                if img_tensor.shape[1] != H_expected or img_tensor.shape[2] != W_expected:
+                    import torchvision.transforms.functional as TF
+                    img_tensor = TF.resize(img_tensor, (H_expected, W_expected), antialias=True)
+                
+                # Add only batch dimension: [1, C, H, W]
+                image_tensor = img_tensor.unsqueeze(0).to(self.device)
                 batch["observation.image"] = image_tensor
 
             # Predict action sequence using LeRobot policy
@@ -456,7 +439,7 @@ class PolicyEvaluator:
             while not done and episode_length < max_episode_steps:
                 # Get image observation if the model needs it
                 obs_dict = obs
-                if self.config.get("policy_type") == "lerobot" and hasattr(self.config, "image_shape"):
+                if self.config.get("policy_type") == "lerobot" and self.config.get("image_shape") is not None:
                     # Get image from environment render
                     try:
                         image = env.render()
