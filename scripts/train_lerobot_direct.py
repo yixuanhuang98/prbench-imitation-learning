@@ -13,6 +13,7 @@ Usage:
 import logging
 import time
 from contextlib import nullcontext
+import sys
 from pathlib import Path
 from pprint import pformat
 from typing import Any
@@ -27,7 +28,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
 from lerobot.datasets.sampler import EpisodeAwareSampler
 from lerobot.datasets.utils import cycle
-from lerobot.envs.factory import make_env
+from lerobot.envs.factory import make_env, make_env_config
 from lerobot.envs.utils import close_envs
 from lerobot.optim.factory import make_optimizer_and_scheduler
 from lerobot.policies.factory import make_policy, make_pre_post_processors
@@ -163,9 +164,37 @@ def train(cfg: TrainPipelineConfig):
 
     # Create environment used for evaluating checkpoints during training on simulation data.
     eval_env = None
-    if cfg.eval_freq > 0 and cfg.env is not None:
+    eval_env_cfg = cfg.env
+
+    # CLI override: --eval_env.type=... --eval_env.task=...
+    eval_env_type = None
+    eval_env_task = None
+    for arg in sys.argv:
+        if arg.startswith("--eval_env.type="):
+            eval_env_type = arg.split("=", 1)[1]
+        elif arg.startswith("--eval_env.task="):
+            eval_env_task = arg.split("=", 1)[1]
+
+    if cfg.eval_freq > 0:
+        if eval_env_type is not None:
+            logging.info(
+                f"Using eval env from CLI: type={eval_env_type}, task={eval_env_task}"
+            )
+            eval_env_cfg = make_env_config(eval_env_type, task=eval_env_task)
+        elif eval_env_cfg is None:
+            # If user didn't pass an env, auto-create a sensible default from dataset
+            try:
+                robot_type = dataset.meta.robot_type or ""
+            except Exception:
+                robot_type = ""
+            if isinstance(robot_type, str) and "motion2d" in robot_type.lower():
+                logging.info(
+                    "No --env specified; auto-configuring prbench Motion2D-p0-v0 for evaluation"
+                )
+                eval_env_cfg = make_env_config("prbench", task="Motion2D-p0-v0")
+    if cfg.eval_freq > 0 and eval_env_cfg is not None:
         logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        eval_env = make_env(eval_env_cfg, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     logging.info("Creating policy")
     policy = make_policy(
@@ -217,8 +246,11 @@ def train(cfg: TrainPipelineConfig):
     num_total_params = sum(p.numel() for p in policy.parameters())
 
     logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
-    if cfg.env is not None:
-        logging.info(f"{cfg.env.task=}")
+    if eval_env is not None:
+        try:
+            logging.info(f"{eval_env_cfg.task=}")
+        except Exception:
+            pass
     logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
     logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
     logging.info(f"{dataset.num_episodes=}")

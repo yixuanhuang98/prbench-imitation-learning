@@ -178,3 +178,6 @@ checkpoint_evaluation_results/
 checkpoint_experiment_results/
 pusht_results/
 test_results/
+expert_data/
+datasets/
+outputs/
