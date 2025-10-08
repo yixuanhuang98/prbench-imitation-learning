@@ -21,6 +21,7 @@ Usage:
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -38,7 +39,8 @@ from prbench_imitation_learning import (
 )
 
 try:
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    # Import to verify lerobot is available
+    import lerobot
 
     LEROBOT_AVAILABLE = True
 except ImportError:
@@ -57,12 +59,15 @@ def main():
     parser.add_argument(
         "--policy-type",
         type=str,
-        default="diffusion",
+        default="lerobot",
         choices=["diffusion", "lerobot", "behavior_cloning", "all"],
         help="Type of policy to train (diffusion=custom implementation, lerobot=LeRobot implementation)",
     )
     parser.add_argument(
-        "--epochs", type=int, default=50, help="Number of training epochs"
+        "--steps", type=int, default=200000, help="Number of training steps (default: 200K for full training)"
+    )
+    parser.add_argument(
+        "--quick-test", action="store_true", help="Quick test with 5K steps"
     )
     parser.add_argument(
         "--batch-size", type=int, default=64, help="Training batch size"
@@ -72,6 +77,9 @@ def main():
     )
     parser.add_argument(
         "--use-wandb", action="store_true", help="Use Weights & Biases for logging"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=100000, help="Random seed (default: 100000)"
     )
 
     # Evaluation options
@@ -142,27 +150,22 @@ def main():
     print(f"Output directory: {output_dir}")
     print("=" * 80)
 
-    # Load PushT dataset
-    print("\n📦 Loading PushT dataset...")
-    print("Note: First run will download the dataset from HuggingFace (~100MB)")
-    
-    try:
-        dataset = LeRobotDataset("lerobot/pusht")
-        dataset_path = dataset.root
-        print(f"✅ Dataset loaded: {len(dataset)} samples")
-        print(f"Dataset path: {dataset_path}")
-    except Exception as e:
-        print(f"❌ Failed to load dataset: {e}")
-        sys.exit(1)
+    # Use PushT dataset from HuggingFace
+    print("\n📦 Using PushT dataset from HuggingFace")
+    print("Note: Dataset will be downloaded on first use (~100MB)")
+    dataset_path = "lerobot/pusht"  # Use repo_id directly
+    print(f"✅ Dataset: {dataset_path}")
 
     # Save experiment configuration
     experiment_config = {
         "experiment_name": args.experiment_name,
         "dataset": "lerobot/pusht",
         "policy_type": args.policy_type,
-        "epochs": args.epochs,
+        "training_steps": 5000 if args.quick_test else args.steps,
+        "quick_test": args.quick_test,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
+        "seed": args.seed,
         "eval_episodes": args.eval_episodes,
         "timestamp": time.time(),
     }
@@ -172,17 +175,28 @@ def main():
         json.dump(experiment_config, f, indent=2)
     print(f"Experiment config saved to: {config_path}")
 
-    # Training configuration
+    # Training configuration - use optimized LeRobot configuration
     train_config = get_default_training_config()
-    train_config.update(
-        {
-            "batch_size": args.batch_size,
-            "num_epochs": args.epochs,
-            "learning_rate": args.learning_rate,
-            "use_wandb": args.use_wandb,
-            "num_workers": 4,  # Parallel data loading
-        }
-    )
+    
+    # Override with command-line arguments
+    training_steps = 5000 if args.quick_test else args.steps
+    train_config.update({
+        "batch_size": args.batch_size,
+        "training_steps": training_steps,
+        "learning_rate": args.learning_rate,
+        "use_wandb": args.use_wandb,
+        "seed": args.seed,
+        "num_workers": 4,
+        # Logging and checkpointing
+        "log_interval": 200,
+        "save_freq": 25000 if not args.quick_test else 1000,
+        "eval_freq": 25000 if not args.quick_test else 1000,
+    })
+    
+    if args.quick_test:
+        print("🚀 Quick test mode: Training for 5K steps")
+    else:
+        print(f"📊 Full training mode: {training_steps} steps")
 
     results = {}
 

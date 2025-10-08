@@ -1,6 +1,7 @@
 """Evaluation functionality for trained diffusion policies."""
 
 import json
+import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -107,10 +108,8 @@ class PolicyEvaluator:
 
             # Load LeRobot diffusion config and dataset stats
             diffusion_config = checkpoint["diffusion_config"]
-            dataset_stats = checkpoint.get("dataset_stats", None)
-
-            # Create LeRobot model with stats for proper normalization
-            model = LeRobotDiffusionPolicy(diffusion_config, dataset_stats=dataset_stats)
+            # Create LeRobot model (stats are handled by preprocessors)
+            model = LeRobotDiffusionPolicy(diffusion_config)
 
             # Load state dict
             model.load_state_dict(checkpoint["model_state_dict"])
@@ -135,9 +134,17 @@ class PolicyEvaluator:
                 if isinstance(m, nn.Linear):
                     m.register_forward_pre_hook(_trim_input_pre_hook)
 
+            # Handle both step-based and epoch-based checkpoints
+            if 'step' in checkpoint:
+                progress_info = f"step {checkpoint['step']}"
+            elif 'epoch' in checkpoint:
+                progress_info = f"epoch {checkpoint['epoch']}"
+            else:
+                progress_info = "unknown progress"
+            
             print(
                 f"LeRobot model loaded successfully "
-                f"(epoch {checkpoint['epoch']}, "
+                f"({progress_info}, "
                 f"loss: {checkpoint['loss']:.6f})"
             )
         else:
@@ -155,9 +162,17 @@ class PolicyEvaluator:
             model.to(self.device)
             model.eval()
 
+            # Handle both step-based and epoch-based checkpoints
+            if 'step' in checkpoint:
+                progress_info = f"step {checkpoint['step']}"
+            elif 'epoch' in checkpoint:
+                progress_info = f"epoch {checkpoint['epoch']}"
+            else:
+                progress_info = "unknown progress"
+            
             print(
                 f"Custom model loaded successfully "
-                f"(epoch {checkpoint['epoch']}, "
+                f"({progress_info}, "
                 f"loss: {checkpoint['loss']:.6f})"
             )
 
