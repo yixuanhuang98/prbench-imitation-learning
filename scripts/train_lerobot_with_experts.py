@@ -232,48 +232,76 @@ def collect_expert_demonstrations(
     for episode_idx in range(num_episodes):
         logging.info(f"Collecting episode {episode_idx + 1}/{num_episodes}")
 
-        trajectory = []
-        reset_seed = seed if set_random_seed else np.random.randint(0, 1000000)
-        obs, info = env.reset(seed=reset_seed)
-        agent.reset(obs, info)
-
-        step_count = 0
-        episode_reward = 0.0
-
-        while step_count < max_steps_per_episode:
+        # Wrap the per-episode collection block in a try/except. On failure or timeout, skip to next episode.
+        episode_start_time = time.perf_counter()
+        try:
+            trajectory = []
+            reset_seed = seed if set_random_seed else np.random.randint(0, 1000000)
+            # Reset env; if this fails, skip episode
             try:
-                action = agent.step()
-                next_obs, reward, terminated, truncated, next_info = env.step(action)
-                done = terminated or truncated
-
-                transition = {
-                    "obs": obs.copy(),
-                    "action": (
-                        action.copy()
-                        if hasattr(action, "copy")
-                        else np.array(action, dtype=np.float32)
-                    ),
-                    "reward": float(reward),
-                    "next_obs": next_obs.copy(),
-                    "done": done,
-                    "terminated": terminated,
-                    "truncated": truncated,
-                }
-                trajectory.append(transition)
-
-                agent.update(next_obs, reward, done, next_info)
-                episode_reward += float(reward)
-                step_count += 1
-
-                if done:
-                    break
-
-                obs = next_obs
-                info = next_info
-
+                obs, info = env.reset(seed=reset_seed)
             except Exception as e:
-                logging.warning(f"  Error during step {step_count}: {e}")
-                break
+                logging.warning(f"  Env reset failed: {e}")
+                raise
+            # Initialize planner; if planning fails (e.g., no plan), skip episode
+            try:
+                agent.reset(obs, info)
+            except Exception as e:
+                logging.warning(f"  Agent reset/planning failed: {e}")
+                raise
+
+            step_count = 0
+            episode_reward = 0.0
+
+            while step_count < max_steps_per_episode:
+                # Abort the episode if a time limit is exceeded
+                if (time.perf_counter() - episode_start_time) > planning_timeout:
+                    logging.warning(
+                        f"  Episode time limit exceeded ({planning_timeout:.1f}s); skipping episode {episode_idx + 1}."
+                    )
+                    raise TimeoutError("Episode time limit exceeded")
+
+                try:
+                    action = agent.step()
+                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    done = terminated or truncated
+
+                    transition = {
+                        "obs": obs.copy(),
+                        "action": (
+                            action.copy()
+                            if hasattr(action, "copy")
+                            else np.array(action, dtype=np.float32)
+                        ),
+                        "reward": float(reward),
+                        "next_obs": next_obs.copy(),
+                        "done": done,
+                        "terminated": terminated,
+                        "truncated": truncated,
+                    }
+                    trajectory.append(transition)
+
+                    agent.update(next_obs, reward, done, next_info)
+                    episode_reward += float(reward)
+                    step_count += 1
+
+                    if done:
+                        break
+
+                    obs = next_obs
+                    info = next_info
+
+                except Exception as e:
+                    logging.warning(f"  Error during step {step_count}: {e}")
+                    # Propagate up to outer handler to skip current episode entirely
+                    raise
+
+        except Exception as e:
+            logging.warning(
+                f"  Skipping episode {episode_idx + 1} due to failure/timeout: {e}"
+            )
+            episode_idx -= 1
+            continue
 
         # Check success
         success = next_info.get("success", False) if "next_info" in locals() else False
