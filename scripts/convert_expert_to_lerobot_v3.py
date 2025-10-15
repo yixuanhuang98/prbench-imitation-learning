@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-"""
-Convert expert pickle data to a LeRobot v3.0 dataset (file-based Parquet) using
+"""Convert expert pickle data to a LeRobot v3.0 dataset (file-based Parquet) using
 LeRobot's dataset API, mirroring PushT's structure so it works with
 train_lerobot_direct.py locally (no Hub required).
 
@@ -25,14 +24,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
-from PIL import Image as PILImage
 
 # Import LeRobot APIs
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.datasets.utils import combine_feature_dicts, hw_to_dataset_features
+from PIL import Image as PILImage
 
 
-def load_expert_pickle(expert_data_dir: Path) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+def load_expert_pickle(
+    expert_data_dir: Path,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     import pickle
 
     pkl_path = expert_data_dir / "dataset.pkl"
@@ -65,11 +66,7 @@ def to_pil(img: np.ndarray) -> PILImage:
 def infer_shapes(frames: List[Dict[str, Any]]) -> Tuple[int, int, Tuple[int, int, int]]:
     # Assume frames contain np arrays
     for fr in frames:
-        if (
-            "observation.state" in fr
-            and "action" in fr
-            and "observation.image" in fr
-        ):
+        if "observation.state" in fr and "action" in fr and "observation.image" in fr:
             state_dim = int(np.array(fr["observation.state"]).shape[0])
             action_dim = int(np.array(fr["action"]).shape[0])
             img_shape = tuple(np.array(fr["observation.image"]).shape)
@@ -77,7 +74,9 @@ def infer_shapes(frames: List[Dict[str, Any]]) -> Tuple[int, int, Tuple[int, int
     raise ValueError("Could not infer shapes from frames; expected keys missing.")
 
 
-def build_features(state_dim: int, action_dim: int, img_shape: Tuple[int, int, int]) -> Dict[str, Dict]:
+def build_features(
+    state_dim: int, action_dim: int, img_shape: Tuple[int, int, int]
+) -> Dict[str, Dict]:
     # Build observation features (state + image), using images (not videos) for simplicity
     obs_hw = {f"s{i}": float for i in range(state_dim)}
     # Add a single camera
@@ -173,16 +172,31 @@ def convert(
     print("Structure:")
     print(f"  - {output_dir}/meta/info.json")
     print(f"  - {output_dir}/meta/tasks.parquet")
-    print(f"  - {output_dir}/meta/episodes/chunk-000/file-000.parquet (and possibly more)")
+    print(
+        f"  - {output_dir}/meta/episodes/chunk-000/file-000.parquet (and possibly more)"
+    )
     print(f"  - {output_dir}/data/chunk-000/file-000.parquet (and possibly more)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert expert pickle to LeRobot v3.0 file-based dataset")
-    parser.add_argument("--expert_data_dir", type=str, required=True, help="Directory containing dataset.pkl")
-    parser.add_argument("--output_dir", type=str, required=True, help="Output dataset root directory")
-    parser.add_argument("--repo_id", type=str, default="motion2d_expert", help="Local dataset repo_id")
-    parser.add_argument("--fps", type=int, default=10, help="Frames per second for timestamps")
+    parser = argparse.ArgumentParser(
+        description="Convert expert pickle to LeRobot v3.0 file-based dataset"
+    )
+    parser.add_argument(
+        "--expert_data_dir",
+        type=str,
+        required=True,
+        help="Directory containing dataset.pkl",
+    )
+    parser.add_argument(
+        "--output_dir", type=str, required=True, help="Output dataset root directory"
+    )
+    parser.add_argument(
+        "--repo_id", type=str, default="motion2d_expert", help="Local dataset repo_id"
+    )
+    parser.add_argument(
+        "--fps", type=int, default=10, help="Frames per second for timestamps"
+    )
     args = parser.parse_args()
 
     expert_dir = Path(args.expert_data_dir)
@@ -215,5 +229,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

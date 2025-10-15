@@ -24,7 +24,9 @@ try:
     from lerobot.policies.diffusion.modeling_diffusion import (
         DiffusionPolicy as LeRobotDiffusionPolicy,
     )
-    from lerobot.policies.diffusion.processor_diffusion import make_diffusion_pre_post_processors
+    from lerobot.policies.diffusion.processor_diffusion import (
+        make_diffusion_pre_post_processors,
+    )
 
     # isort: on
 
@@ -255,28 +257,36 @@ def train_lerobot_diffusion_policy(
     # Use LeRobot's metadata approach like the original script
     dataset_metadata = LeRobotDatasetMetadata("lerobot/pusht")
     features = dataset_to_policy_features(dataset_metadata.features)
-    output_features = {key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION}
-    input_features = {key: ft for key, ft in features.items() if key not in output_features}
+    output_features = {
+        key: ft for key, ft in features.items() if ft.type is FeatureType.ACTION
+    }
+    input_features = {
+        key: ft for key, ft in features.items() if key not in output_features
+    }
 
     # Configure delta_timestamps to match the policy configuration
     # This tells the dataset how to load temporal data (observations and actions)
     obs_horizon = config.get("obs_horizon", 2)
     pred_horizon = config.get("pred_horizon", 16)
-    
+
     delta_timestamps = {}
     # For observations: load the last n_obs_steps frames
     for key in input_features.keys():
-        delta_timestamps[key] = [i / dataset_metadata.fps for i in range(1 - obs_horizon, 1)]
-    
+        delta_timestamps[key] = [
+            i / dataset_metadata.fps for i in range(1 - obs_horizon, 1)
+        ]
+
     # For actions: load pred_horizon future actions
     for key in output_features.keys():
         delta_timestamps[key] = [i / dataset_metadata.fps for i in range(pred_horizon)]
-    
+
     print(f"Delta timestamps configuration: {delta_timestamps}")
-    
+
     # Create dataset with proper delta_timestamps - use pyav backend to avoid FFmpeg issues
     try:
-        dataset = LeRobotDataset("lerobot/pusht", delta_timestamps=delta_timestamps, video_backend="pyav")
+        dataset = LeRobotDataset(
+            "lerobot/pusht", delta_timestamps=delta_timestamps, video_backend="pyav"
+        )
         print(f"Dataset loaded with {len(dataset)} sequences")
     except Exception as e:
         print(f"Warning: Failed to load with delta_timestamps, trying without: {e}")
@@ -336,12 +346,16 @@ def train_lerobot_diffusion_policy(
 
     # Optimizer parameters (matching successful run)
     diffusion_config.optimizer_lr = config.get("learning_rate", 1e-4)
-    diffusion_config.optimizer_betas = tuple(config.get("optimizer_betas", [0.95, 0.999]))
+    diffusion_config.optimizer_betas = tuple(
+        config.get("optimizer_betas", [0.95, 0.999])
+    )
     diffusion_config.optimizer_eps = config.get("optimizer_eps", 1e-08)
     diffusion_config.optimizer_weight_decay = config.get("weight_decay", 1e-06)
 
     # Diffusion step embedding
-    diffusion_config.diffusion_step_embed_dim = config.get("diffusion_step_embed_dim", 128)
+    diffusion_config.diffusion_step_embed_dim = config.get(
+        "diffusion_step_embed_dim", 128
+    )
 
     # Vision backbone configuration (matching successful run)
     diffusion_config.vision_backbone = config.get("vision_backbone", "resnet18")
@@ -350,8 +364,12 @@ def train_lerobot_diffusion_policy(
     diffusion_config.n_groups = config.get("n_groups", 8)
     diffusion_config.crop_shape = tuple(config.get("crop_shape", [84, 84]))
     diffusion_config.crop_is_random = True
-    diffusion_config.spatial_softmax_num_keypoints = config.get("spatial_softmax_num_keypoints", 32)
-    diffusion_config.use_film_scale_modulation = config.get("use_film_scale_modulation", True)
+    diffusion_config.spatial_softmax_num_keypoints = config.get(
+        "spatial_softmax_num_keypoints", 32
+    )
+    diffusion_config.use_film_scale_modulation = config.get(
+        "use_film_scale_modulation", True
+    )
     diffusion_config.use_group_norm = config.get("use_group_norm", True)
     diffusion_config.use_separate_rgb_encoder_per_camera = False
 
@@ -366,7 +384,7 @@ def train_lerobot_diffusion_policy(
     # Create model without dataset_stats (stats are handled by preprocessors)
     model = LeRobotDiffusionPolicy(diffusion_config).to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
+
     # Create preprocessor and postprocessor for data handling
     preprocessor, postprocessor = make_diffusion_pre_post_processors(
         config=diffusion_config,
@@ -382,36 +400,31 @@ def train_lerobot_diffusion_policy(
         eps=diffusion_config.optimizer_eps,
         weight_decay=diffusion_config.optimizer_weight_decay,
     )
-    
+
     # Use cosine annealing with warmup (matching LeRobot's scheduler)
     from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
-    
+
     steps_per_epoch = max(1, len(dataset) // config["batch_size"])
     total_steps = config.get("training_steps", 200000)
     warmup_steps = 500  # Matching LeRobot's warmup
-    
+
     # Create warmup scheduler
     warmup_scheduler = LinearLR(
-        optimizer,
-        start_factor=0.001,
-        end_factor=1.0,
-        total_iters=warmup_steps
+        optimizer, start_factor=0.001, end_factor=1.0, total_iters=warmup_steps
     )
-    
+
     # Create cosine annealing scheduler
     cosine_scheduler = CosineAnnealingLR(
-        optimizer,
-        T_max=total_steps - warmup_steps,
-        eta_min=0
+        optimizer, T_max=total_steps - warmup_steps, eta_min=0
     )
-    
+
     # Combine warmup and cosine
     lr_scheduler = SequentialLR(
         optimizer,
         schedulers=[warmup_scheduler, cosine_scheduler],
-        milestones=[warmup_steps]
+        milestones=[warmup_steps],
     )
-    
+
     print(f"Using Adam optimizer with cosine annealing (warmup: {warmup_steps} steps)")
 
     # Create dataloader
@@ -450,7 +463,7 @@ def train_lerobot_diffusion_policy(
     # Training loop - step-based training matching LeRobot
     model.train()
     best_loss = float("inf")
-    
+
     # Use gradient scaler for mixed precision (optional, but good for performance)
     use_amp = config.get("use_amp", False)
     grad_scaler = GradScaler(enabled=use_amp)
@@ -458,38 +471,39 @@ def train_lerobot_diffusion_policy(
     training_steps = config.get("training_steps", 200000)
     log_interval = config.get("log_interval", 200)
     save_freq = config.get("save_freq", 25000)
-    
+
     print(f"Training for {training_steps} steps (log every {log_interval} steps)")
 
     step = 0
     epoch = 0
-    
+
     # Create infinite dataloader iterator
     from itertools import cycle
+
     dataloader_iterator = cycle(dataloader)
-    
+
     while step < training_steps:
         # Get next batch
         batch = next(dataloader_iterator)
-        
+
         # Preprocess batch (normalizes, moves to device, etc.)
         batch = preprocessor(batch)
 
         # Forward pass through LeRobot policy (with optional AMP)
-        with torch.amp.autocast('cuda', enabled=use_amp):
+        with torch.amp.autocast("cuda", enabled=use_amp):
             loss, _ = model.forward(batch)
 
         # Backward pass
         optimizer.zero_grad()
-        
+
         if use_amp:
             # Use gradient scaling for mixed precision
             grad_scaler.scale(loss).backward()
             grad_scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(
-                model.parameters(), 
+                model.parameters(),
                 config.get("grad_clip_norm", 10.0),
-                error_if_nonfinite=False
+                error_if_nonfinite=False,
             )
             grad_scaler.step(optimizer)
             grad_scaler.update()
@@ -497,72 +511,86 @@ def train_lerobot_diffusion_policy(
             # Standard backward pass
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
-                model.parameters(), 
+                model.parameters(),
                 config.get("grad_clip_norm", 10.0),
-                error_if_nonfinite=False
+                error_if_nonfinite=False,
             )
             optimizer.step()
-        
+
         # Step the learning rate scheduler
         if lr_scheduler is not None:
             lr_scheduler.step()
-        
+
         step += 1
-        
+
         # Log progress
         if step % log_interval == 0:
-            current_lr = optimizer.param_groups[0]['lr']
+            current_lr = optimizer.param_groups[0]["lr"]
             msg = f"Step {step}/{training_steps}, Loss: {loss.item():.6f}, LR: {current_lr:.2e}"
             log_message(msg)
-            
+
             if config.get("use_wandb", False):
-                wandb.log({
-                    "loss": loss.item(),
-                    "learning_rate": current_lr,
-                    "step": step
-                })
-        
+                wandb.log(
+                    {"loss": loss.item(), "learning_rate": current_lr, "step": step}
+                )
+
         # Save checkpoint periodically
         if step % save_freq == 0 or step == training_steps:
             save_config = config.copy()
-            save_config.update({
-                "obs_dim": obs_state_shape[0],
-                "action_dim": action_shape[0],
-                "image_shape": list(image_shape) if image_shape else None,
-                "policy_type": "lerobot",
-            })
-            
-            checkpoint_path = Path(model_save_path).parent / f"checkpoint_step_{step}.pth"
-            torch.save({
-                "step": step,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler else None,
-                "loss": loss.item(),
-                "config": save_config,
-                "diffusion_config": diffusion_config,
-            }, checkpoint_path)
+            save_config.update(
+                {
+                    "obs_dim": obs_state_shape[0],
+                    "action_dim": action_shape[0],
+                    "image_shape": list(image_shape) if image_shape else None,
+                    "policy_type": "lerobot",
+                }
+            )
+
+            checkpoint_path = (
+                Path(model_save_path).parent / f"checkpoint_step_{step}.pth"
+            )
+            torch.save(
+                {
+                    "step": step,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": (
+                        lr_scheduler.state_dict() if lr_scheduler else None
+                    ),
+                    "loss": loss.item(),
+                    "config": save_config,
+                    "diffusion_config": diffusion_config,
+                },
+                checkpoint_path,
+            )
             log_message(f"Checkpoint saved at step {step}: {checkpoint_path}")
-            
+
         # Track best loss and save best model
         if loss.item() < best_loss:
             best_loss = loss.item()
             save_config = config.copy()
-            save_config.update({
-                "obs_dim": obs_state_shape[0],
-                "action_dim": action_shape[0],
-                "image_shape": list(image_shape) if image_shape else None,
-                "policy_type": "lerobot",
-            })
-            torch.save({
-                "step": step,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": lr_scheduler.state_dict() if lr_scheduler else None,
-                "loss": best_loss,
-                "config": save_config,
-                "diffusion_config": diffusion_config,
-            }, model_save_path)
+            save_config.update(
+                {
+                    "obs_dim": obs_state_shape[0],
+                    "action_dim": action_shape[0],
+                    "image_shape": list(image_shape) if image_shape else None,
+                    "policy_type": "lerobot",
+                }
+            )
+            torch.save(
+                {
+                    "step": step,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": (
+                        lr_scheduler.state_dict() if lr_scheduler else None
+                    ),
+                    "loss": best_loss,
+                    "config": save_config,
+                    "diffusion_config": diffusion_config,
+                },
+                model_save_path,
+            )
             log_message(f"Best model updated at step {step} with loss: {best_loss:.6f}")
 
     log_message("LeRobot training completed!")
@@ -581,7 +609,6 @@ def get_default_training_config() -> Dict[str, Any]:
         "action_horizon": 8,  # n_action_steps
         "pred_horizon": 16,  # horizon (full prediction horizon)
         "num_diffusion_iters": 100,  # num_train_timesteps
-        
         # Training parameters (matching successful LeRobot run)
         "batch_size": 64,
         "num_epochs": 500,  # Will train for 200K steps total
@@ -591,14 +618,12 @@ def get_default_training_config() -> Dict[str, Any]:
         "optimizer_betas": [0.95, 0.999],
         "optimizer_eps": 1e-08,
         "grad_clip_norm": 10.0,  # Matching LeRobot's grad_clip_norm
-        
         # LeRobot-specific diffusion parameters
         "beta_schedule": "squaredcos_cap_v2",
         "beta_start": 0.0001,
         "beta_end": 0.02,
         "drop_n_last_frames": 7,  # horizon - n_action_steps - n_obs_steps + 1 = 16 - 8 - 2 + 1 = 7
         "diffusion_step_embed_dim": 128,
-        
         # Vision parameters (matching LeRobot)
         "vision_backbone": "resnet18",
         "down_dims": [512, 1024, 2048],
@@ -608,11 +633,9 @@ def get_default_training_config() -> Dict[str, Any]:
         "spatial_softmax_num_keypoints": 32,
         "use_film_scale_modulation": True,
         "use_group_norm": True,
-        
         # Dataset parameters
         "video_backend": "pyav",  # Use pyav to avoid FFmpeg issues
         "num_workers": 4,
-        
         # Logging
         "log_interval": 200,  # Log every 200 steps like LeRobot
         "save_freq": 25000,  # Save checkpoint every 25000 steps

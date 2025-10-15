@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-"""
-Enhanced LeRobot training script with expert demonstration generation support.
+"""Enhanced LeRobot training script with expert demonstration generation support.
 
 This script extends the LeRobot training pipeline to support:
 1. Expert demonstration generation using BilevelPlanningAgent for geom2d environments
@@ -263,7 +262,9 @@ def collect_expert_demonstrations(
 
                 try:
                     action = agent.step()
-                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    next_obs, reward, terminated, truncated, next_info = env.step(
+                        action
+                    )
                     done = terminated or truncated
 
                     transition = {
@@ -478,7 +479,7 @@ def train(cfg: TrainPipelineConfig):
     # Check for expert data generation flags in environment variables or config
     # This is a workaround since the parser.wrap() doesn't easily allow custom args
     generate_expert_data = getattr(cfg, "generate_expert_data", False)
-    
+
     if cfg.wandb.enable and cfg.wandb.project:
         wandb_logger = WandBLogger(cfg)
     else:
@@ -498,7 +499,9 @@ def train(cfg: TrainPipelineConfig):
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None:
         logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        eval_env = make_env(
+            cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs
+        )
 
     logging.info("Creating policy")
     policy = make_policy(
@@ -508,7 +511,9 @@ def train(cfg: TrainPipelineConfig):
 
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (
+        cfg.policy.pretrained_path and not cfg.resume
+    ) or not cfg.policy.pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
     if cfg.policy.pretrained_path is not None:
@@ -516,7 +521,10 @@ def train(cfg: TrainPipelineConfig):
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "stats": dataset.meta.stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
+                "features": {
+                    **policy.config.input_features,
+                    **policy.config.output_features,
+                },
                 "norm_map": policy.config.normalization_mapping,
             },
         }
@@ -542,12 +550,18 @@ def train(cfg: TrainPipelineConfig):
     step = 0
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler
+        )
 
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    num_learnable_params = sum(
+        p.numel() for p in policy.parameters() if p.requires_grad
+    )
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+    logging.info(
+        colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}"
+    )
     if cfg.env is not None:
         logging.info(f"{cfg.env.task=}")
     logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
@@ -591,7 +605,11 @@ def train(cfg: TrainPipelineConfig):
     }
 
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+        cfg.batch_size,
+        dataset.num_frames,
+        dataset.num_episodes,
+        train_metrics,
+        initial_step=step,
     )
 
     logging.info("Start offline training on a fixed dataset")
@@ -631,7 +649,14 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(
-                checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor, postprocessor
+                checkpoint_dir,
+                step,
+                cfg,
+                policy,
+                optimizer,
+                lr_scheduler,
+                preprocessor,
+                postprocessor,
             )
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
@@ -642,7 +667,11 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Eval policy at step {step}")
             with (
                 torch.no_grad(),
-                torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
+                (
+                    torch.autocast(device_type=device.type)
+                    if cfg.policy.use_amp
+                    else nullcontext()
+                ),
             ):
                 eval_info = eval_policy_all(
                     envs=eval_env,
@@ -666,7 +695,11 @@ def train(cfg: TrainPipelineConfig):
                 "eval_s": AverageMeter("eval_s", ":.3f"),
             }
             eval_tracker = MetricsTracker(
-                cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
+                cfg.batch_size,
+                dataset.num_frames,
+                dataset.num_episodes,
+                eval_metrics,
+                initial_step=step,
             )
             eval_tracker.eval_s = aggregated.pop("eval_s")
             eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
@@ -674,7 +707,9 @@ def train(cfg: TrainPipelineConfig):
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                wandb_logger.log_video(
+                    eval_info["overall"]["video_paths"][0], step, mode="eval"
+                )
 
     if eval_env:
         close_envs(eval_env)
@@ -693,7 +728,7 @@ def main():
         description="Train LeRobot policies with optional expert demonstration generation",
         add_help=False,  # Let LeRobot parser handle help
     )
-    
+
     expert_group = arg_parser.add_argument_group("Expert Demonstration Generation")
     expert_group.add_argument(
         "--generate_expert_data",
@@ -703,7 +738,13 @@ def main():
     expert_group.add_argument(
         "--expert_env",
         type=str,
-        choices=["motion2d", "stickbutton2d", "obstruction2d", "clutteredstorage2d", "clutteredretrieval2d"],
+        choices=[
+            "motion2d",
+            "stickbutton2d",
+            "obstruction2d",
+            "clutteredstorage2d",
+            "clutteredretrieval2d",
+        ],
         default="motion2d",
         help="Environment for expert demonstration generation",
     )
@@ -753,21 +794,21 @@ def main():
         action="store_true",
         help="Use specific random seeds for environment resets",
     )
-    
+
     # Parse known args (expert-specific ones)
     expert_args, remaining_args = arg_parser.parse_known_args()
-    
+
     # If expert data generation is requested, generate it first
     if expert_args.generate_expert_data:
         init_logging()
-        
+
         logging.info("=" * 80)
         logging.info("EXPERT DEMONSTRATION GENERATION")
         logging.info("=" * 80)
-        
+
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         expert_output_dir = f"./expert_data/{expert_args.expert_env}_p{expert_args.expert_env_param}_{timestamp}"
-        
+
         try:
             dataset_path = collect_expert_demonstrations(
                 env_name=expert_args.expert_env,
@@ -782,28 +823,29 @@ def main():
                 seed=123,
                 set_random_seed=expert_args.expert_set_random_seed,
             )
-            
+
             logging.info("=" * 80)
             logging.info("Expert demonstration generation completed!")
             logging.info(f"Dataset saved to: {dataset_path}")
             logging.info("=" * 80)
-            
+
             # Add dataset path to remaining args for training
             # Note: You would need to configure the dataset loading in your config file
             # or pass it via command line arguments
             logging.info("\nTo train with this dataset, use:")
             logging.info(f"  --dataset.path={dataset_path}")
-            
+
         except Exception as e:
             logging.error(f"Failed to generate expert demonstrations: {e}")
             import traceback
+
             traceback.print_exc()
             sys.exit(1)
-        
+
         logging.info("\n" + "=" * 80)
         logging.info("STARTING TRAINING WITH EXPERT DATA")
         logging.info("=" * 80 + "\n")
-    
+
     # Continue with normal LeRobot training
     init_logging()
     train()
@@ -811,4 +853,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

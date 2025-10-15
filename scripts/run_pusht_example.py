@@ -64,7 +64,10 @@ def main():
         help="Type of policy to train (diffusion=custom implementation, lerobot=LeRobot implementation)",
     )
     parser.add_argument(
-        "--steps", type=int, default=200000, help="Number of training steps (default: 200K for full training)"
+        "--steps",
+        type=int,
+        default=200000,
+        help="Number of training steps (default: 200K for full training)",
     )
     parser.add_argument(
         "--quick-test", action="store_true", help="Quick test with 5K steps"
@@ -117,7 +120,9 @@ def main():
         help="Output directory for all results",
     )
     parser.add_argument(
-        "--experiment-name", type=str, help="Experiment name (auto-generated if not provided)"
+        "--experiment-name",
+        type=str,
+        help="Experiment name (auto-generated if not provided)",
     )
 
     args = parser.parse_args()
@@ -177,22 +182,24 @@ def main():
 
     # Training configuration - use optimized LeRobot configuration
     train_config = get_default_training_config()
-    
+
     # Override with command-line arguments
     training_steps = 5000 if args.quick_test else args.steps
-    train_config.update({
-        "batch_size": args.batch_size,
-        "training_steps": training_steps,
-        "learning_rate": args.learning_rate,
-        "use_wandb": args.use_wandb,
-        "seed": args.seed,
-        "num_workers": 4,
-        # Logging and checkpointing
-        "log_interval": 200,
-        "save_freq": 25000 if not args.quick_test else 1000,
-        "eval_freq": 25000 if not args.quick_test else 1000,
-    })
-    
+    train_config.update(
+        {
+            "batch_size": args.batch_size,
+            "training_steps": training_steps,
+            "learning_rate": args.learning_rate,
+            "use_wandb": args.use_wandb,
+            "seed": args.seed,
+            "num_workers": 4,
+            # Logging and checkpointing
+            "log_interval": 200,
+            "save_freq": 25000 if not args.quick_test else 1000,
+            "eval_freq": 25000 if not args.quick_test else 1000,
+        }
+    )
+
     if args.quick_test:
         print("🚀 Quick test mode: Training for 5K steps")
     else:
@@ -280,11 +287,12 @@ def main():
         models_to_eval = [(name, path) for name, path in models_to_eval if path]
 
         eval_results = {}
-        
+
         # Import gym_pusht to register the environment
         import gym_pusht  # pylint: disable=import-outside-toplevel,unused-import
+
         pusht_env_id = "gym_pusht/PushT-v0"
-        
+
         for policy_name, model_path in models_to_eval:
             print(f"\n🔄 Evaluating {policy_name} policy...")
 

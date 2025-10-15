@@ -90,10 +90,14 @@ class DiffusionPolicyDataset(Dataset):
     def _group_by_episodes(self):
         """Group dataset frames by episode."""
         # Check if this is a LeRobotDataset
-        if hasattr(self.dataset, 'episode_data_index') and hasattr(self.dataset, 'hf_dataset'):
+        if hasattr(self.dataset, "episode_data_index") and hasattr(
+            self.dataset, "hf_dataset"
+        ):
             # Use the underlying HuggingFace dataset directly to get ALL episodes
             # LeRobot's episode_data_index may filter episodes based on video availability
-            print("Grouping episodes from HuggingFace dataset (bypassing LeRobot filtering)...")
+            print(
+                "Grouping episodes from HuggingFace dataset (bypassing LeRobot filtering)..."
+            )
             episodes = {}
             for i in range(len(self.dataset.hf_dataset)):
                 episode_idx = int(self.dataset.hf_dataset[i]["episode_index"])
@@ -102,12 +106,12 @@ class DiffusionPolicyDataset(Dataset):
                 episodes[episode_idx].append(i)
             print(f"Found {len(episodes)} episodes from HuggingFace dataset")
             return episodes
-        elif hasattr(self.dataset, 'episode_data_index'):
+        elif hasattr(self.dataset, "episode_data_index"):
             # Use LeRobot's native episode structure as fallback
             episodes = {}
             for ep_idx in range(len(self.dataset.episode_data_index)):
-                start_idx = int(self.dataset.episode_data_index['from'][ep_idx])
-                end_idx = int(self.dataset.episode_data_index['to'][ep_idx])
+                start_idx = int(self.dataset.episode_data_index["from"][ep_idx])
+                end_idx = int(self.dataset.episode_data_index["to"][ep_idx])
                 episodes[ep_idx] = list(range(start_idx, end_idx))
             return episodes
         else:
@@ -191,13 +195,19 @@ class DiffusionPolicyDataset(Dataset):
             if isinstance(x, torch.Tensor):
                 return x
             return torch.from_numpy(x)
-        
+
         obs_states = torch.stack([to_tensor(obs) for obs in obs_states])
-        obs_images = torch.stack([
-            (to_tensor(img).permute(2, 0, 1) if len(img.shape) == 3 and not isinstance(img, torch.Tensor)
-             else to_tensor(img)) / 255.0
-            for img in obs_images
-        ])
+        obs_images = torch.stack(
+            [
+                (
+                    to_tensor(img).permute(2, 0, 1)
+                    if len(img.shape) == 3 and not isinstance(img, torch.Tensor)
+                    else to_tensor(img)
+                )
+                / 255.0
+                for img in obs_images
+            ]
+        )
         actions = torch.stack([to_tensor(action) for action in actions])
 
         return {

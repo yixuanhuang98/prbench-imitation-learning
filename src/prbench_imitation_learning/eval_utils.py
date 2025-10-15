@@ -30,7 +30,9 @@ def preprocess_observation_generic(observations: Any) -> dict[str, torch.Tensor]
     out: dict[str, torch.Tensor] = {}
 
     # images
-    if (isinstance(observations, dict) and ("pixels" in observations or "image" in observations)):
+    if isinstance(observations, dict) and (
+        "pixels" in observations or "image" in observations
+    ):
         source = observations.get("pixels", observations.get("image"))
         if isinstance(source, dict):
             raw_imgs = {f"{OBS_IMAGES}.{k}": v for k, v in source.items()}
@@ -44,7 +46,10 @@ def preprocess_observation_generic(observations: Any) -> dict[str, torch.Tensor]
             # (b, h, w, c) -> (b, c, h, w), float32 in [0,1]
             _, h, w, c = img_t.shape
             assert c < h and c < w
-            img_t = einops.rearrange(img_t, "b h w c -> b c h w").contiguous().float() / 255.0
+            img_t = (
+                einops.rearrange(img_t, "b h w c -> b c h w").contiguous().float()
+                / 255.0
+            )
             out[key] = img_t
 
     # state
@@ -63,7 +68,9 @@ def preprocess_observation_generic(observations: Any) -> dict[str, torch.Tensor]
     return out
 
 
-def inject_task_generic(observation: dict[str, Any], num_envs: int | None = None) -> dict[str, Any]:
+def inject_task_generic(
+    observation: dict[str, Any], num_envs: int | None = None
+) -> dict[str, Any]:
     """Ensure 'task' key exists in observation for policies that expect it."""
     if "task" in observation:
         return observation
@@ -72,8 +79,10 @@ def inject_task_generic(observation: dict[str, Any], num_envs: int | None = None
             num_envs = 1
         else:
             any_val = next(iter(observation.values()))
-            num_envs = any_val.shape[0] if hasattr(any_val, "shape") and any_val.ndim > 0 else 1
+            num_envs = (
+                any_val.shape[0]
+                if hasattr(any_val, "shape") and any_val.ndim > 0
+                else 1
+            )
     observation["task"] = ["" for _ in range(num_envs)]
     return observation
-
-

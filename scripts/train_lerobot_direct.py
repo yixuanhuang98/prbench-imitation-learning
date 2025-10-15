@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-"""
-Direct LeRobot training script for PushT.
+"""Direct LeRobot training script for PushT.
 
 This script mimics the official lerobot_train.py and provides a streamlined
 training pipeline using the LeRobot framework directly.
@@ -11,18 +10,14 @@ Usage:
 """
 
 import logging
+import sys
 import time
 from contextlib import nullcontext
-import sys
 from pathlib import Path
 from pprint import pformat
 from typing import Any
 
 import torch
-from termcolor import colored
-from torch.amp import GradScaler
-from torch.optim import Optimizer
-
 from lerobot.configs import parser
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.datasets.factory import make_dataset
@@ -35,7 +30,6 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import get_device_from_parameters
 from lerobot.rl.wandb_utils import WandBLogger
-from lerobot_eval import eval_policy_all
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
 from lerobot.utils.train_utils import (
@@ -51,6 +45,10 @@ from lerobot.utils.utils import (
     has_method,
     init_logging,
 )
+from lerobot_eval import eval_policy_all
+from termcolor import colored
+from torch.amp import GradScaler
+from torch.optim import Optimizer
 
 
 def update_policy(
@@ -64,8 +62,7 @@ def update_policy(
     use_amp: bool = False,
     lock=None,
 ) -> tuple[MetricsTracker, dict]:
-    """
-    Performs a single training step to update the policy's weights.
+    """Performs a single training step to update the policy's weights.
 
     This function executes the forward and backward passes, clips gradients, and steps the optimizer and
     learning rate scheduler. It also handles mixed-precision training via a GradScaler.
@@ -128,8 +125,7 @@ def update_policy(
 
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
-    """
-    Main function to train a policy using LeRobot framework.
+    """Main function to train a policy using LeRobot framework.
 
     This function orchestrates the entire training pipeline, including:
     - Setting up logging, seeding, and device configuration.
@@ -194,7 +190,11 @@ def train(cfg: TrainPipelineConfig):
                 eval_env_cfg = make_env_config("prbench", task="Motion2D-p0-v0")
     if cfg.eval_freq > 0 and eval_env_cfg is not None:
         logging.info("Creating env")
-        eval_env = make_env(eval_env_cfg, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        eval_env = make_env(
+            eval_env_cfg,
+            n_envs=cfg.eval.batch_size,
+            use_async_envs=cfg.eval.use_async_envs,
+        )
 
     logging.info("Creating policy")
     policy = make_policy(
@@ -205,7 +205,9 @@ def train(cfg: TrainPipelineConfig):
     # Create processors - only provide dataset_stats if not resuming from saved processors
     processor_kwargs = {}
     postprocessor_kwargs = {}
-    if (cfg.policy.pretrained_path and not cfg.resume) or not cfg.policy.pretrained_path:
+    if (
+        cfg.policy.pretrained_path and not cfg.resume
+    ) or not cfg.policy.pretrained_path:
         # Only provide dataset_stats when not resuming from saved processor state
         processor_kwargs["dataset_stats"] = dataset.meta.stats
 
@@ -214,7 +216,10 @@ def train(cfg: TrainPipelineConfig):
             "device_processor": {"device": device.type},
             "normalizer_processor": {
                 "stats": dataset.meta.stats,
-                "features": {**policy.config.input_features, **policy.config.output_features},
+                "features": {
+                    **policy.config.input_features,
+                    **policy.config.output_features,
+                },
                 "norm_map": policy.config.normalization_mapping,
             },
         }
@@ -240,12 +245,18 @@ def train(cfg: TrainPipelineConfig):
     step = 0  # number of policy updates (forward + backward + optim)
 
     if cfg.resume:
-        step, optimizer, lr_scheduler = load_training_state(cfg.checkpoint_path, optimizer, lr_scheduler)
+        step, optimizer, lr_scheduler = load_training_state(
+            cfg.checkpoint_path, optimizer, lr_scheduler
+        )
 
-    num_learnable_params = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+    num_learnable_params = sum(
+        p.numel() for p in policy.parameters() if p.requires_grad
+    )
     num_total_params = sum(p.numel() for p in policy.parameters())
 
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+    logging.info(
+        colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}"
+    )
     if eval_env is not None:
         try:
             logging.info(f"{eval_env_cfg.task=}")
@@ -293,7 +304,11 @@ def train(cfg: TrainPipelineConfig):
     }
 
     train_tracker = MetricsTracker(
-        cfg.batch_size, dataset.num_frames, dataset.num_episodes, train_metrics, initial_step=step
+        cfg.batch_size,
+        dataset.num_frames,
+        dataset.num_episodes,
+        train_metrics,
+        initial_step=step,
     )
 
     logging.info("Start offline training on a fixed dataset")
@@ -335,7 +350,14 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
             save_checkpoint(
-                checkpoint_dir, step, cfg, policy, optimizer, lr_scheduler, preprocessor, postprocessor
+                checkpoint_dir,
+                step,
+                cfg,
+                policy,
+                optimizer,
+                lr_scheduler,
+                preprocessor,
+                postprocessor,
             )
             update_last_checkpoint(checkpoint_dir)
             if wandb_logger:
@@ -346,7 +368,11 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Eval policy at step {step}")
             with (
                 torch.no_grad(),
-                torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext(),
+                (
+                    torch.autocast(device_type=device.type)
+                    if cfg.policy.use_amp
+                    else nullcontext()
+                ),
             ):
                 eval_info = eval_policy_all(
                     envs=eval_env,  # dict[suite][task_id] -> vec_env
@@ -373,7 +399,11 @@ def train(cfg: TrainPipelineConfig):
                 "eval_s": AverageMeter("eval_s", ":.3f"),
             }
             eval_tracker = MetricsTracker(
-                cfg.batch_size, dataset.num_frames, dataset.num_episodes, eval_metrics, initial_step=step
+                cfg.batch_size,
+                dataset.num_frames,
+                dataset.num_episodes,
+                eval_metrics,
+                initial_step=step,
             )
             eval_tracker.eval_s = aggregated.pop("eval_s")
             eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
@@ -381,7 +411,9 @@ def train(cfg: TrainPipelineConfig):
             if wandb_logger:
                 wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                 wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                wandb_logger.log_video(
+                    eval_info["overall"]["video_paths"][0], step, mode="eval"
+                )
 
     if eval_env:
         close_envs(eval_env)

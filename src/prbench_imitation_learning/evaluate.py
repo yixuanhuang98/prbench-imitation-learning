@@ -135,13 +135,13 @@ class PolicyEvaluator:
                     m.register_forward_pre_hook(_trim_input_pre_hook)
 
             # Handle both step-based and epoch-based checkpoints
-            if 'step' in checkpoint:
+            if "step" in checkpoint:
                 progress_info = f"step {checkpoint['step']}"
-            elif 'epoch' in checkpoint:
+            elif "epoch" in checkpoint:
                 progress_info = f"epoch {checkpoint['epoch']}"
             else:
                 progress_info = "unknown progress"
-            
+
             print(
                 f"LeRobot model loaded successfully "
                 f"({progress_info}, "
@@ -163,13 +163,13 @@ class PolicyEvaluator:
             model.eval()
 
             # Handle both step-based and epoch-based checkpoints
-            if 'step' in checkpoint:
+            if "step" in checkpoint:
                 progress_info = f"step {checkpoint['step']}"
-            elif 'epoch' in checkpoint:
+            elif "epoch" in checkpoint:
                 progress_info = f"epoch {checkpoint['epoch']}"
             else:
                 progress_info = "unknown progress"
-            
+
             print(
                 f"Custom model loaded successfully "
                 f"({progress_info}, "
@@ -198,15 +198,19 @@ class PolicyEvaluator:
             obs_image = None
 
         # Handle dimension mismatch (e.g., PushT environment has 5D obs but dataset has 2D)
-        if hasattr(self.model, 'obs_dim') and len(obs_state) > self.model.obs_dim:
+        if hasattr(self.model, "obs_dim") and len(obs_state) > self.model.obs_dim:
             # Trim observation to match model's expected dimensions
-            obs_state = obs_state[:self.model.obs_dim]
-        elif self.config.get("policy_type") == "lerobot" and self.config.get("obs_dim") and len(obs_state) > self.config["obs_dim"]:
+            obs_state = obs_state[: self.model.obs_dim]
+        elif (
+            self.config.get("policy_type") == "lerobot"
+            and self.config.get("obs_dim")
+            and len(obs_state) > self.config["obs_dim"]
+        ):
             # Also handle for LeRobot models using config
-            obs_state = obs_state[:self.config["obs_dim"]]
+            obs_state = obs_state[: self.config["obs_dim"]]
 
         self.obs_history.append(obs_state)
-        
+
         # Also append image to history if available
         if obs_image is not None:
             self.image_history.append(obs_image)
@@ -214,7 +218,7 @@ class PolicyEvaluator:
         # If we don't have enough history, pad with the current observation
         while len(self.obs_history) < self.config["obs_horizon"]:
             self.obs_history.append(obs_state)
-        
+
         # Pad image history if needed
         if obs_image is not None:
             while len(self.image_history) < self.config["obs_horizon"]:
@@ -246,7 +250,7 @@ class PolicyEvaluator:
 
             # Use actual robot state from observations (matches training setup)
             robot_state = obs_state_tensor  # Shape: [1, state_dim]
-            
+
             # Empty environment state to match training setup
             env_state = torch.zeros(1, 0, device=self.device)
 
@@ -259,17 +263,25 @@ class PolicyEvaluator:
             if self.config.get("image_shape") is not None and obs_image is not None:
                 # Model was trained with images, provide single timestep image
                 C, H_expected, W_expected = self.config["image_shape"]
-                
+
                 if len(obs_image.shape) == 3:  # H, W, C format
-                    img_tensor = torch.from_numpy(obs_image).float().permute(2, 0, 1) / 255.0
+                    img_tensor = (
+                        torch.from_numpy(obs_image).float().permute(2, 0, 1) / 255.0
+                    )
                 else:  # Already C, H, W
                     img_tensor = torch.from_numpy(obs_image).float() / 255.0
-                
+
                 # Resize if needed to match expected dimensions
-                if img_tensor.shape[1] != H_expected or img_tensor.shape[2] != W_expected:
+                if (
+                    img_tensor.shape[1] != H_expected
+                    or img_tensor.shape[2] != W_expected
+                ):
                     import torchvision.transforms.functional as TF
-                    img_tensor = TF.resize(img_tensor, (H_expected, W_expected), antialias=True)
-                
+
+                    img_tensor = TF.resize(
+                        img_tensor, (H_expected, W_expected), antialias=True
+                    )
+
                 # Add only batch dimension: [1, C, H, W]
                 image_tensor = img_tensor.unsqueeze(0).to(self.device)
                 batch["observation.image"] = image_tensor
@@ -291,8 +303,7 @@ class PolicyEvaluator:
                     )
                     n_steps = cfg.n_obs_steps  # type: ignore
                     step_embed = cfg.diffusion_step_embed_dim  # type: ignore
-                    
-                    
+
                     # Compute expected cond dim
                     expected_global = (robot_dim + env_dim) * n_steps
                     expected_cond = step_embed + expected_global
@@ -308,7 +319,7 @@ class PolicyEvaluator:
                         dim=-1,
                     )
                     gc_flat = gc.flatten(start_dim=1)
-                    
+
                     # Ask model to build the actual global_cond and print shape
                     # pylint: disable=protected-access
                     true_gc = self.model.diffusion._prepare_global_conditioning(batch)  # type: ignore # pylint: disable=line-too-long
@@ -405,10 +416,15 @@ class PolicyEvaluator:
                 try:
                     import gym_pusht  # pylint: disable=import-outside-toplevel,unused-import
                 except ImportError:
-                    print("Warning: gym_pusht not installed. Install with: pip install gym-pusht")
+                    print(
+                        "Warning: gym_pusht not installed. Install with: pip install gym-pusht"
+                    )
 
             # Enable rendering if saving videos or if model uses images
-            needs_rendering = save_videos or (self.config.get("policy_type") == "lerobot" and self.config.get("image_shape") is not None)
+            needs_rendering = save_videos or (
+                self.config.get("policy_type") == "lerobot"
+                and self.config.get("image_shape") is not None
+            )
             render_mode = "rgb_array" if needs_rendering else None
             env = gym.make(env_id, render_mode=render_mode)
         except Exception as e:
@@ -454,7 +470,10 @@ class PolicyEvaluator:
             while not done and episode_length < max_episode_steps:
                 # Get image observation if the model needs it
                 obs_dict = obs
-                if self.config.get("policy_type") == "lerobot" and self.config.get("image_shape") is not None:
+                if (
+                    self.config.get("policy_type") == "lerobot"
+                    and self.config.get("image_shape") is not None
+                ):
                     # Get image from environment render
                     try:
                         image = env.render()
@@ -462,7 +481,7 @@ class PolicyEvaluator:
                             obs_dict = {"state": obs, "image": image}
                     except Exception:
                         obs_dict = obs
-                
+
                 # Get action from policy
                 action = self.predict_action(obs_dict)
 

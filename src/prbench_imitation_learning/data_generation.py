@@ -10,8 +10,9 @@ import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 import prbench
-from datasets import Array2D, Array3D, Features, Value  # type: ignore
 from matplotlib import animation
+
+from datasets import Array2D, Array3D, Features, Value  # type: ignore
 
 
 def setup_environment() -> None:

@@ -49,6 +49,10 @@ You can learn about the CLI options for this script in the `EvalPipelineConfig` 
 import concurrent.futures as cf
 import json
 import logging
+
+# Local eval utilities
+# Make local src importable when running as a script
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -58,6 +62,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
+from pathlib import Path as _Path
 from pprint import pformat
 from typing import Any, TypedDict
 
@@ -65,10 +70,6 @@ import einops
 import gymnasium as gym
 import numpy as np
 import torch
-from termcolor import colored
-from torch import Tensor, nn
-from tqdm import trange
-
 from lerobot.configs import parser
 from lerobot.configs.eval import EvalPipelineConfig
 from lerobot.envs.factory import make_env
@@ -76,18 +77,14 @@ from lerobot.envs.utils import (
     check_env_attributes_and_types,
     close_envs,
 )
-# Local eval utilities
-# Make local src importable when running as a script
-import sys
-from pathlib import Path as _Path
+from termcolor import colored
+from torch import Tensor, nn
+from tqdm import trange
+
 _ROOT = _Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from src.eval_utils import (
-    preprocess_observation_generic,
-    inject_task_generic,
-)
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.processor import PolicyAction, PolicyProcessorPipeline
@@ -98,6 +95,11 @@ from lerobot.utils.utils import (
     get_safe_torch_device,
     init_logging,
     inside_slurm,
+)
+
+from src.prbench_imitation_learning.eval_utils import (
+    inject_task_generic,
+    preprocess_observation_generic,
 )
 
 
@@ -153,6 +155,7 @@ def rollout(
             frames_list = env.call("render")
             if isinstance(frames_list, list) and len(frames_list) > 0:
                 import numpy as _np
+
                 frames = _np.stack(frames_list, axis=0)
         except Exception:
             frames = None
@@ -214,7 +217,11 @@ def rollout(
             observation["observation.images.cam0"] = observation["observation.image"]
         # Fabricate missing image keys if none are present but policy expects images
         try:
-            needed = list(policy.config.image_features.keys()) if hasattr(policy.config, "image_features") else []
+            needed = (
+                list(policy.config.image_features.keys())
+                if hasattr(policy.config, "image_features")
+                else []
+            )
         except Exception:
             needed = []
         if needed:
@@ -229,14 +236,18 @@ def rollout(
             for img_key in needed:
                 if img_key not in observation:
                     # Try to copy from any existing image
-                    src = observation.get("observation.images.cam0") or observation.get("observation.image")
+                    src = observation.get("observation.images.cam0") or observation.get(
+                        "observation.image"
+                    )
                     if isinstance(src, torch.Tensor):
                         observation[img_key] = src
                     else:
                         # Create black image of expected shape (C,H,W)
                         shape = policy.config.image_features[img_key].shape  # (C,H,W)
                         _dev = next(policy.parameters()).device
-                        observation[img_key] = torch.zeros((batch_size, *shape), dtype=torch.float32, device=_dev)
+                        observation[img_key] = torch.zeros(
+                            (batch_size, *shape), dtype=torch.float32, device=_dev
+                        )
         with torch.inference_mode():
             action = policy.select_action(observation)
         action = postprocessor(action)
@@ -254,6 +265,7 @@ def rollout(
                 frames_list = env.call("render")
                 if isinstance(frames_list, list) and len(frames_list) > 0:
                     import numpy as _np
+
                     frames = _np.stack(frames_list, axis=0)
             except Exception:
                 frames = None
@@ -286,9 +298,13 @@ def rollout(
 
         step += 1
         running_success_rate = (
-            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any").numpy().mean()
+            einops.reduce(torch.stack(all_successes, dim=1), "b n -> b", "any")
+            .numpy()
+            .mean()
         )
-        progbar.set_postfix({"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"})
+        progbar.set_postfix(
+            {"running_success_rate": f"{running_success_rate.item() * 100:.1f}%"}
+        )
         progbar.update()
 
     # Track the final observation.
@@ -306,7 +322,9 @@ def rollout(
     if return_observations:
         stacked_observations = {}
         for key in all_observations[0]:
-            stacked_observations[key] = torch.stack([obs[key] for obs in all_observations], dim=1)
+            stacked_observations[key] = torch.stack(
+                [obs[key] for obs in all_observations], dim=1
+            )
         ret[OBS_STR] = stacked_observations
 
     if hasattr(policy, "use_original_modules"):
@@ -370,7 +388,9 @@ def eval_policy(
             return
         n_to_render_now = min(max_episodes_rendered - n_episodes_rendered, env.num_envs)
         if isinstance(env, gym.vector.SyncVectorEnv):
-            ep_frames.append(np.stack([env.envs[i].render() for i in range(n_to_render_now)]))  # noqa: B023
+            ep_frames.append(
+                np.stack([env.envs[i].render() for i in range(n_to_render_now)])
+            )  # noqa: B023
         elif isinstance(env, gym.vector.AsyncVectorEnv):
             # Here we must render all frames and discard any we don't need.
             ep_frames.append(np.stack(env.call("render")[:n_to_render_now]))
@@ -382,7 +402,9 @@ def eval_policy(
         episode_data: dict | None = None
 
     # we dont want progress bar when we use slurm, since it clutters the logs
-    progbar = trange(n_batches, desc="Stepping through eval batches", disable=inside_slurm())
+    progbar = trange(
+        n_batches, desc="Stepping through eval batches", disable=inside_slurm()
+    )
     for batch_ix in progbar:
         # Cache frames for rendering videos. Each item will be (b, h, w, c), and the list indexes the rollout
         # step.
@@ -393,7 +415,8 @@ def eval_policy(
             seeds = None
         else:
             seeds = range(
-                start_seed + (batch_ix * env.num_envs), start_seed + ((batch_ix + 1) * env.num_envs)
+                start_seed + (batch_ix * env.num_envs),
+                start_seed + ((batch_ix + 1) * env.num_envs),
             )
         rollout_data = rollout(
             env=env,
@@ -413,13 +436,22 @@ def eval_policy(
 
         # Make a mask with shape (batch, n_steps) to mask out rollout data after the first done
         # (batch-element-wise). Note the `done_indices + 1` to make sure to keep the data from the done step.
-        mask = (torch.arange(n_steps) <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)).int()
+        mask = (
+            torch.arange(n_steps)
+            <= einops.repeat(done_indices + 1, "b -> b s", s=n_steps)
+        ).int()
         # Extend metrics.
-        batch_sum_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "sum")
+        batch_sum_rewards = einops.reduce(
+            (rollout_data["reward"] * mask), "b n -> b", "sum"
+        )
         sum_rewards.extend(batch_sum_rewards.tolist())
-        batch_max_rewards = einops.reduce((rollout_data["reward"] * mask), "b n -> b", "max")
+        batch_max_rewards = einops.reduce(
+            (rollout_data["reward"] * mask), "b n -> b", "max"
+        )
         max_rewards.extend(batch_max_rewards.tolist())
-        batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
+        batch_successes = einops.reduce(
+            (rollout_data["success"] * mask), "b n -> b", "any"
+        )
         all_successes.extend(batch_successes.tolist())
         if seeds:
             all_seeds.extend(seeds)
@@ -432,17 +464,27 @@ def eval_policy(
                 rollout_data,
                 done_indices,
                 start_episode_index=batch_ix * env.num_envs,
-                start_data_index=(0 if episode_data is None else (episode_data["index"][-1].item() + 1)),
+                start_data_index=(
+                    0
+                    if episode_data is None
+                    else (episode_data["index"][-1].item() + 1)
+                ),
                 fps=env.unwrapped.metadata["render_fps"],
             )
             if episode_data is None:
                 episode_data = this_episode_data
             else:
                 # Some sanity checks to make sure we are correctly compiling the data.
-                assert episode_data["episode_index"][-1] + 1 == this_episode_data["episode_index"][0]
+                assert (
+                    episode_data["episode_index"][-1] + 1
+                    == this_episode_data["episode_index"][0]
+                )
                 assert episode_data["index"][-1] + 1 == this_episode_data["index"][0]
                 # Concatenate the episode data.
-                episode_data = {k: torch.cat([episode_data[k], this_episode_data[k]]) for k in episode_data}
+                episode_data = {
+                    k: torch.cat([episode_data[k], this_episode_data[k]])
+                    for k in episode_data
+                }
 
         # Maybe render video for visualization.
         if max_episodes_rendered > 0 and len(ep_frames) > 0:
@@ -460,7 +502,9 @@ def eval_policy(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
+                        stacked_frames[
+                            : done_index + 1
+                        ],  # + 1 to capture the last observation
                         env.unwrapped.metadata["render_fps"],
                     ),
                 )
@@ -469,7 +513,9 @@ def eval_policy(
                 n_episodes_rendered += 1
 
         progbar.set_postfix(
-            {"running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"}
+            {
+                "running_success_rate": f"{np.mean(all_successes[:n_episodes]).item() * 100:.1f}%"
+            }
         )
 
     # Wait till all video rendering threads are done.
@@ -515,7 +561,11 @@ def eval_policy(
 
 
 def _compile_episode_data(
-    rollout_data: dict, done_indices: Tensor, start_episode_index: int, start_data_index: int, fps: float
+    rollout_data: dict,
+    done_indices: Tensor,
+    start_episode_index: int,
+    start_data_index: int,
+    fps: float,
 ) -> dict:
     """Convenience function for `eval_policy(return_episode_data=True)`
 
@@ -533,7 +583,9 @@ def _compile_episode_data(
         # Here we do `num_frames - 1` as we don't want to include the last observation frame just yet.
         ep_dict = {
             ACTION: rollout_data[ACTION][ep_ix, : num_frames - 1],
-            "episode_index": torch.tensor([start_episode_index + ep_ix] * (num_frames - 1)),
+            "episode_index": torch.tensor(
+                [start_episode_index + ep_ix] * (num_frames - 1)
+            ),
             "frame_index": torch.arange(0, num_frames - 1, 1),
             "timestamp": torch.arange(0, num_frames - 1, 1) / fps,
             DONE: rollout_data["done"][ep_ix, : num_frames - 1],
@@ -554,7 +606,9 @@ def _compile_episode_data(
     for key in ep_dicts[0]:
         data_dict[key] = torch.cat([x[key] for x in ep_dicts])
 
-    data_dict["index"] = torch.arange(start_data_index, start_data_index + total_frames, 1)
+    data_dict["index"] = torch.arange(
+        start_data_index, start_data_index + total_frames, 1
+    )
 
     return data_dict
 
@@ -570,10 +624,14 @@ def eval_main(cfg: EvalPipelineConfig):
     torch.backends.cuda.matmul.allow_tf32 = True
     set_seed(cfg.seed)
 
-    logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
+    logging.info(
+        colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}"
+    )
 
     logging.info("Making environment.")
-    envs = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+    envs = make_env(
+        cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs
+    )
 
     logging.info("Making policy.")
 
@@ -587,9 +645,18 @@ def eval_main(cfg: EvalPipelineConfig):
         policy_cfg=cfg.policy,
         pretrained_path=cfg.policy.pretrained_path,
         # The inference device is automatically set to match the detected hardware, overriding any previous device settings from training to ensure compatibility.
-        preprocessor_overrides={"device_processor": {"device": str(policy.config.device)}},
+        preprocessor_overrides={
+            "device_processor": {"device": str(policy.config.device)}
+        },
     )
-    with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
+    with (
+        torch.no_grad(),
+        (
+            torch.autocast(device_type=device.type)
+            if cfg.policy.use_amp
+            else nullcontext()
+        ),
+    ):
         info = eval_policy_all(
             envs=envs,
             policy=policy,
@@ -680,10 +747,10 @@ def run_one(
     return_episode_data: bool,
     start_seed: int | None,
 ):
-    """
-    Run eval_one for a single (task_group, task_id, env).
-    Returns (task_group, task_id, task_metrics_dict).
-    This function is intentionally module-level to make it easy to test.
+    """Run eval_one for a single (task_group, task_id, env).
+
+    Returns (task_group, task_id, task_metrics_dict). This function is intentionally
+    module-level to make it easy to test.
     """
     task_videos_dir = None
     if videos_dir is not None:
@@ -721,12 +788,12 @@ def eval_policy_all(
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
 ) -> dict:
-    """
-    Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
-    This implementation flattens tasks, runs them sequentially or via ThreadPoolExecutor,
-    accumulates per-group and overall statistics, and returns the same aggregate metrics
-    schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
-    plus per-task infos.
+    """Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
+
+    This implementation flattens tasks, runs them sequentially or via
+    ThreadPoolExecutor, accumulates per-group and overall statistics, and returns the
+    same aggregate metrics schema as the single-env evaluator (avg_sum_reward /
+    avg_max_reward / pc_success / timings) plus per-task infos.
     """
     start_t = time.time()
 
@@ -734,7 +801,9 @@ def eval_policy_all(
     tasks = [(tg, tid, vec) for tg, group in envs.items() for tid, vec in group.items()]
 
     # accumulators: track metrics at both per-group level and across all groups
-    group_acc: dict[str, dict[str, list]] = defaultdict(lambda: {k: [] for k in ACC_KEYS})
+    group_acc: dict[str, dict[str, list]] = defaultdict(
+        lambda: {k: [] for k in ACC_KEYS}
+    )
     overall: dict[str, list] = {k: [] for k in ACC_KEYS}
     per_task_infos: list[dict] = []
 
@@ -781,7 +850,9 @@ def eval_policy_all(
         for task_group, task_id, env in tasks:
             tg, tid, metrics = task_runner(task_group, task_id, env)
             _accumulate_to(tg, metrics)
-            per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+            per_task_infos.append(
+                {"task_group": tg, "task_id": tid, "metrics": metrics}
+            )
     else:
         # threaded path: submit all tasks, consume completions on main thread and accumulate there
         with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
@@ -792,7 +863,9 @@ def eval_policy_all(
             for fut in cf.as_completed(fut2meta):
                 tg, tid, metrics = fut.result()
                 _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                per_task_infos.append(
+                    {"task_group": tg, "task_id": tid, "metrics": metrics}
+                )
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):
@@ -807,7 +880,11 @@ def eval_policy_all(
         groups_aggregated[group] = {
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
-            "pc_success": _agg_from_list(acc["successes"]) * 100 if acc["successes"] else float("nan"),
+            "pc_success": (
+                _agg_from_list(acc["successes"]) * 100
+                if acc["successes"]
+                else float("nan")
+            ),
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
         }
@@ -816,7 +893,11 @@ def eval_policy_all(
     overall_agg = {
         "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
         "avg_max_reward": _agg_from_list(overall["max_rewards"]),
-        "pc_success": _agg_from_list(overall["successes"]) * 100 if overall["successes"] else float("nan"),
+        "pc_success": (
+            _agg_from_list(overall["successes"]) * 100
+            if overall["successes"]
+            else float("nan")
+        ),
         "n_episodes": len(overall["sum_rewards"]),
         "eval_s": time.time() - start_t,
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
