@@ -6,14 +6,14 @@ The generated data can be used for imitation learning training.
 
 Usage examples:
     # Generate expert demos for Motion2D
-    python scripts/train_lerobot_with_experts.py \
+    python scripts/generate_expert_demonstrations.py \
         --expert_env=motion2d \
         --expert_env_param=2 \
         --expert_episodes=50 \
         --output_dir=./expert_data/motion2d_p2
 
     # Generate expert demos for StickButton2D with videos
-    python scripts/train_lerobot_with_experts.py \
+    python scripts/generate_expert_demonstrations.py \
         --expert_env=stickbutton2d \
         --expert_env_param=3 \
         --expert_episodes=100 \
@@ -21,13 +21,25 @@ Usage examples:
         --output_dir=./expert_data/stickbutton_p3
 
     # Generate expert demos for Obstruction2D with custom settings
-    python scripts/train_lerobot_with_experts.py \
+    python scripts/generate_expert_demonstrations.py \
         --expert_env=obstruction2d \
         --expert_env_param=2 \
         --expert_episodes=75 \
         --expert_max_steps=3000 \
         --expert_planning_timeout=60.0 \
         --output_dir=./expert_data/obstruction_p2
+
+    # Generate expert demos for ClutteredRetrieval2D with all options
+    python scripts/generate_expert_demonstrations.py \
+        --expert_env=clutteredretrieval2d \
+        --expert_env_param=5 \
+        --expert_episodes=200 \
+        --expert_max_steps=10000 \
+        --expert_save_videos \
+        --expert_max_abstract_plans=15 \
+        --expert_samples_per_step=5 \
+        --expert_planning_timeout=60.0 \
+        --seed=42
 """
 
 import argparse

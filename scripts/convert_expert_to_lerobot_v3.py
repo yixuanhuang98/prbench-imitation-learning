@@ -25,7 +25,7 @@ Usage:
       --repo_id motion2d_teleop \
       --fps 10 \
       --render_images
-  
+
   # For teleoperated demonstrations (state-only, no images):
   python scripts/convert_expert_to_lerobot_v3.py \
       --teleop_data_dir third-party/prbench/demos/Motion2D-p0 \
@@ -73,7 +73,7 @@ def load_teleop_demonstrations(
     render_images: bool = False,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Load teleoperated demonstrations from individual episode pickle files.
-    
+
     Expected structure:
     teleop_data_dir/
         0/
@@ -81,7 +81,7 @@ def load_teleop_demonstrations(
         1/
             <timestamp>.p
         ...
-    
+
     Each pickle file contains:
         - env_id: str
         - seed: int
@@ -90,11 +90,11 @@ def load_teleop_demonstrations(
         - rewards: List[float]
         - terminated: bool
         - truncated: bool
-    
+
     Args:
         teleop_data_dir: Path to directory with demonstrations
         render_images: If True, replay episodes in environment to generate images
-    
+
     Returns:
         metadata: Dict with env info
         frames: List of frame dicts with keys:
@@ -106,20 +106,20 @@ def load_teleop_demonstrations(
     """
     import pickle
     import sys
-    
+
     # Find all episode directories (numeric subdirectories)
     episode_dirs = sorted(
         [d for d in teleop_data_dir.iterdir() if d.is_dir() and d.name.isdigit()],
-        key=lambda d: int(d.name)
+        key=lambda d: int(d.name),
     )
-    
+
     if not episode_dirs:
         raise ValueError(f"No episode directories found in {teleop_data_dir}")
-    
+
     frames = []
     env_id = None
     env = None
-    
+
     # Setup environment if rendering images
     if render_images:
         # Add prbench src to path if not already there
@@ -127,10 +127,11 @@ def load_teleop_demonstrations(
         prbench_src = prbench_root / "src"
         if str(prbench_src) not in sys.path:
             sys.path.insert(0, str(prbench_src))
-        
+
         try:
             import gymnasium as gym
             import prbench
+
             # Register all prbench environments
             prbench.register_all_environments()
         except ImportError as e:
@@ -138,32 +139,33 @@ def load_teleop_demonstrations(
                 f"Failed to import prbench/gymnasium for rendering: {e}\n"
                 f"Tried adding {prbench_src} to path. Make sure prbench is installed."
             ) from e
-    
+
     for ep_idx, ep_dir in enumerate(episode_dirs):
         # Find the pickle file in this episode directory
         pickle_files = list(ep_dir.glob("*.p"))
         if not pickle_files:
             print(f"Warning: No pickle file found in {ep_dir}, skipping")
             continue
-        
+
         pkl_path = pickle_files[0]
         with open(pkl_path, "rb") as f:
             ep_data = pickle.load(f)
-        
+
         if env_id is None:
             env_id = ep_data.get("env_id", "Motion2D-p0")
-        
+
         observations = ep_data["observations"]
         actions = ep_data["actions"]
         seed = ep_data.get("seed", 0)
-        
+
         # Replay episode to generate images if requested
         episode_images = None
         if render_images:
             if env is None:
                 import gymnasium as gym
+
                 env = gym.make(env_id, render_mode="rgb_array")
-            
+
             # Reset with the same seed
             env.reset(seed=seed)
             rendered = env.render()
@@ -171,7 +173,7 @@ def load_teleop_demonstrations(
             if rendered.shape[-1] == 4:
                 rendered = rendered[:, :, :3]
             episode_images = [rendered]
-            
+
             # Execute actions to get images
             for action in actions:
                 env.step(action)
@@ -180,7 +182,7 @@ def load_teleop_demonstrations(
                 if rendered.shape[-1] == 4:
                     rendered = rendered[:, :, :3]
                 episode_images.append(rendered)
-        
+
         # Create frames (note: len(actions) == len(observations) - 1 typically)
         for frame_idx, (obs, act) in enumerate(zip(observations[:-1], actions)):
             frame = {
@@ -189,25 +191,25 @@ def load_teleop_demonstrations(
                 "episode_index": ep_idx,
                 "frame_index": frame_idx,
             }
-            
+
             # Add image if rendered
             if episode_images is not None and frame_idx < len(episode_images):
                 frame["observation.image"] = episode_images[frame_idx]
-            
+
             frames.append(frame)
-        
+
         if (ep_idx + 1) % 10 == 0:
             print(f"Loaded {ep_idx + 1}/{len(episode_dirs)} episodes...")
-    
+
     if env is not None:
         env.close()
-    
+
     metadata = {
         "env_name": env_id or "Motion2D",
         "env_type": "geom2d",
         "data_type": "teleoperated",
     }
-    
+
     return metadata, frames
 
 
@@ -229,7 +231,7 @@ def infer_shapes(frames: List[Dict[str, Any]]) -> Tuple[int, int, Any]:
         if "observation.state" in fr and "action" in fr:
             state_dim = int(np.array(fr["observation.state"]).shape[0])
             action_dim = int(np.array(fr["action"]).shape[0])
-            
+
             # Check if images are present
             if "observation.image" in fr:
                 img_shape = tuple(np.array(fr["observation.image"]).shape)
@@ -243,7 +245,7 @@ def build_features(
     state_dim: int, action_dim: int, img_shape: Any = None
 ) -> Dict[str, Dict]:
     """Build features dict for LeRobot dataset.
-    
+
     Args:
         state_dim: Dimension of state vector
         action_dim: Dimension of action vector
@@ -251,11 +253,13 @@ def build_features(
     """
     # Build observation features (state + optional image)
     obs_hw = {f"s{i}": float for i in range(state_dim)}
-    
+
     # Add a single camera if images are present
     if img_shape is not None:
         obs_hw.update({"cam0": img_shape})
-        obs_feats = hw_to_dataset_features(obs_hw, prefix="observation", use_video=False)
+        obs_feats = hw_to_dataset_features(
+            obs_hw, prefix="observation", use_video=False
+        )
     else:
         obs_feats = hw_to_dataset_features(obs_hw, prefix="observation")
 
@@ -287,7 +291,7 @@ def convert(
     render_images: bool = False,
 ) -> None:
     """Convert expert or teleoperated data to LeRobot format.
-    
+
     Args:
         expert_data_dir: Path to expert data directory (with images)
         teleop_data_dir: Path to teleoperated demo directory
@@ -301,7 +305,9 @@ def convert(
         metadata, frames = load_expert_pickle(expert_data_dir)
         has_images = True
     elif teleop_data_dir is not None:
-        metadata, frames = load_teleop_demonstrations(teleop_data_dir, render_images=render_images)
+        metadata, frames = load_teleop_demonstrations(
+            teleop_data_dir, render_images=render_images
+        )
         has_images = render_images
     else:
         raise ValueError("Either expert_data_dir or teleop_data_dir must be provided")
@@ -338,7 +344,7 @@ def convert(
         for i, fr in enumerate(ep_frames):
             obs_state = np.array(fr["observation.state"], dtype=np.float32)
             action = np.array(fr["action"], dtype=np.float32)
-            
+
             frame = {
                 # special field required (not in features)
                 "task": task_name,
@@ -347,17 +353,19 @@ def convert(
                 "action": action,
                 # Do NOT include 'timestamp' here; LeRobot will infer it automatically
             }
-            
+
             # Add image if present
             if has_images and "observation.image" in fr:
                 image = fr["observation.image"]
                 # image can be np array (H,W,C) uint8; pass PIL or numpy
                 if isinstance(image, np.ndarray):
-                    img_val = image  # LeRobot accepts np ndarray; will be embedded later
+                    img_val = (
+                        image  # LeRobot accepts np ndarray; will be embedded later
+                    )
                 else:
                     img_val = image
                 frame["observation.images.cam0"] = img_val
-            
+
             ds.add_frame(frame)
 
         # save episode (writes data parquet, updates meta, tasks, stats, episodes)
@@ -415,17 +423,19 @@ def main():
     # Validate inputs
     if args.expert_data_dir is None and args.teleop_data_dir is None:
         parser.error("Either --expert_data_dir or --teleop_data_dir must be provided")
-    
+
     if args.expert_data_dir is not None and args.teleop_data_dir is not None:
         parser.error("Cannot specify both --expert_data_dir and --teleop_data_dir")
-    
+
     if args.render_images and args.expert_data_dir is not None:
-        print("Warning: --render_images has no effect for expert data (images already included)")
+        print(
+            "Warning: --render_images has no effect for expert data (images already included)"
+        )
 
     expert_dir = Path(args.expert_data_dir) if args.expert_data_dir else None
     teleop_dir = Path(args.teleop_data_dir) if args.teleop_data_dir else None
     out_dir = Path(args.output_dir)
-    
+
     if out_dir.exists():
         # Avoid accidental overwrite of existing datasets
         raise FileExistsError(f"Output directory already exists: {out_dir}")
